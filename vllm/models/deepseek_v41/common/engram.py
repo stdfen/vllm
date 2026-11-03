@@ -72,6 +72,7 @@ from vllm.models.deepseek_v41.common.ops.query_quant import (
     mxfp8_scale_bytes,
     mxfp8_scale_offset,
 )
+from vllm.models.deepseek_v41.common.engram_file import SafetensorsEngramStore
 from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 from vllm.utils.platform_utils import is_uva_available
@@ -959,6 +960,8 @@ class ParallelEngramEmbedding(nn.Module):
         cpu_offload: bool = False,
         dp_shared_memory: bool = False,
         use_thp: bool = False,
+        file_table_dir: str | None = None,
+        file_tensor_prefix: str | None = None,
     ) -> None:
         super().__init__()
         assert head_sizes and all(size > 0 for size in head_sizes)
@@ -966,6 +969,7 @@ class ParallelEngramEmbedding(nn.Module):
         self.cpu_offload = cpu_offload
         self.dp_shared_memory = dp_shared_memory
         self.use_thp = use_thp
+        self.file_backed = file_table_dir is not None
         self.dp_size = get_engram_dp_size()
         if dp_shared_memory:
             if not cpu_offload:
@@ -1013,6 +1017,17 @@ class ParallelEngramEmbedding(nn.Module):
                     "engram_vocab_start": self.vocab_start_idx,
                 },
             )
+        self._file_store = None
+        if self.file_backed:
+            assert file_table_dir is not None and file_tensor_prefix is not None
+            self._file_store = SafetensorsEngramStore(
+                file_table_dir,
+                file_tensor_prefix,
+                self.vocab_start_idx,
+                self.vocab_end_idx,
+                self.dim,
+                self.block_size,
+            )
         if cpu_offload:
             # Constant dummy values avoid randomizing huge CPU lookup tables.
             set_weight_attrs(self.weight, {"dummy_weight_value": 1.0})
@@ -1033,6 +1048,11 @@ class ParallelEngramEmbedding(nn.Module):
         return self.tp_size * self.dp_size, engram_head_shard_rank()
 
     def _allocate_weights(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.file_backed:
+            return (
+                torch.empty(0, dtype=torch.float8_e4m3fn),
+                torch.empty(0, dtype=torch.uint8),
+            )
         if self.dp_shared_memory:
             group = get_engram_dp_group()
             assert group is not None
@@ -1116,6 +1136,11 @@ class ParallelEngramEmbedding(nn.Module):
         """
         rows = indices.shape[0] * self.part_n_hash_cols
         if not rows:
+            return
+        if self._file_store is not None:
+            self._file_store.lookup(
+                indices, self.head_start, self.part_n_hash_cols, out
+            )
             return
         weight, scales = self._storage()
         ids_stride_t, ids_stride_h = indices.stride()
@@ -1548,7 +1573,7 @@ class Engram(nn.Module):
         # Named ``embed_tokens`` so the checkpoint's ``engram.embed.weight``
         # survives the mapper's ``embed.weight`` -> ``embed_tokens.weight``
         # suffix rule.
-        self.embed_tokens = self._create_embedding(layout, layer_hash_index)
+        self.embed_tokens = self._create_embedding(layout, layer_hash_index, prefix)
         n_hash_cols = (layout.max_ngram_size - 1) * layout.n_heads
         # Without sequence parallelism every TP rank holds every token, so
         # shard the output columns instead of replicating the projection.
@@ -1575,10 +1600,11 @@ class Engram(nn.Module):
         self._init_staging(max_tokens, layout.head_dim)
 
     def _create_embedding(
-        self, layout: EngramLayout, layer_hash_index: int
+        self, layout: EngramLayout, layer_hash_index: int, prefix: str
     ) -> ParallelEngramEmbedding:
         engram_config = get_current_vllm_config().engram_config
         assert engram_config is not None
+        tensor_prefix = prefix.removeprefix("model.") + ".embed"
         return ParallelEngramEmbedding(
             layout.num_embeddings[layer_hash_index],
             layout.head_dim,
@@ -1586,6 +1612,8 @@ class Engram(nn.Module):
             cpu_offload=engram_config.cpu_offload,
             dp_shared_memory=bool(engram_config.dp_shared_memory),
             use_thp=engram_config.use_thp,
+            file_table_dir=(engram_config.table_dir if engram_config.file_backed else None),
+            file_tensor_prefix=(tensor_prefix if engram_config.file_backed else None),
         )
 
     def _init_staging(self, max_tokens: int, head_dim: int) -> None:

@@ -313,6 +313,9 @@ if TYPE_CHECKING:
     VLLM_DEBUG_MFU_METRICS: bool = False
     VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: bool = False
     VLLM_WEIGHT_OFFLOADING_DISABLE_UVA: bool = False
+    VLLM_PINNED_WEIGHT_STAGING: str = "auto"
+    VLLM_PINNED_WEIGHT_STAGING_MIN_MIB: int = 1
+    VLLM_PINNED_WEIGHT_STAGING_MIB: int = 64
     VLLM_KV_OFFLOAD_MAX_BATCH_DESCRIPTORS: int = 0
     VLLM_WSL2_ENABLE_PIN_MEMORY: bool = False
     VLLM_DISABLE_LOG_LOGO: bool = False
@@ -2168,6 +2171,16 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Disable using UVA (Unified Virtual Addressing) for CPU offloading.
     "VLLM_WEIGHT_OFFLOADING_DISABLE_UVA": lambda: bool(
         int(os.getenv("VLLM_WEIGHT_OFFLOADING_DISABLE_UVA", "0"))
+    ),
+    # Stage large mmap-backed CPU weights through a bounded pinned buffer on UMA.
+    "VLLM_PINNED_WEIGHT_STAGING": lambda: os.getenv(
+        "VLLM_PINNED_WEIGHT_STAGING", "auto"
+    ).lower(),
+    "VLLM_PINNED_WEIGHT_STAGING_MIN_MIB": lambda: int(
+        os.getenv("VLLM_PINNED_WEIGHT_STAGING_MIN_MIB", "1")
+    ),
+    "VLLM_PINNED_WEIGHT_STAGING_MIB": lambda: int(
+        os.getenv("VLLM_PINNED_WEIGHT_STAGING_MIB", "64")
     ),
     # Max descriptors per CPU-KV-offload batch-memcpy call. 0 = platform default
     # (ROCm chunks at 8192, since hipMemcpyBatchAsync faults above that on

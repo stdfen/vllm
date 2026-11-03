@@ -422,6 +422,19 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
             name = mapped
             if "confidence_head." in name:
                 loaded_confidence_head = True
+            grouped_match = re.search(
+                r"\.slice\.(\d+)\.(trellis|suh|svh|mul1|mcg)$", name
+            )
+            if grouped_match:
+                slice_id = int(grouped_match.group(1))
+                mapped_group = (
+                    name[: grouped_match.start()] + "." + grouped_match.group(2)
+                )
+                param = params_dict[mapped_group]
+                loaded = param.weight_loader(param, loaded_weight, slice_id)
+                if loaded is not False:
+                    loaded_params.add(mapped_group)
+                continue
 
             # ``.scale`` -> per-method scale suffix.
             if name.endswith(".scale"):
@@ -472,7 +485,14 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
                     continue
                 name = name.replace(weight_name, param_name)
                 param = params_dict[name]
-                param.weight_loader(param, loaded_weight, stacked_shard_id)
+                try:
+                    param.weight_loader(param, loaded_weight, stacked_shard_id)
+                except AssertionError as exc:
+                    raise ValueError(
+                        "DSpark stacked weight shape mismatch for "
+                        f"{name!r} (checkpoint={tuple(loaded_weight.shape)}, "
+                        f"parameter={tuple(param.shape)}, shard={stacked_shard_id})"
+                    ) from exc
                 loaded_params.add(name)
                 break
             else:

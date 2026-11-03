@@ -54,8 +54,28 @@ class EngramConfig:
     effort, falls back to ordinary pinned pages). Prefaulting the tables at
     startup takes longer. Requires cpu_offload without dp_shared_memory."""
 
+    file_backed: bool = False
+    """Read only the requested Engram rows from a separate safetensors model.
+
+    This avoids allocating or pinning the full table and is intended for
+    checkpoints whose quantized model omits the native Engram embedding files.
+    """
+
+    table_dir: str | None = None
+    """Local directory containing the native Engram safetensors and index."""
+
     @model_validator(mode="after")
     def _validate_shared_memory(self) -> Self:
+        if self.file_backed:
+            if not self.cpu_offload:
+                raise ValueError("file_backed Engram requires cpu_offload=True")
+            if self.dp_shared_memory:
+                raise ValueError("file_backed Engram does not use dp_shared_memory")
+            if self.use_thp:
+                raise ValueError("file_backed Engram does not use THP")
+            if not self.table_dir:
+                raise ValueError("file_backed Engram requires table_dir")
+            self.dp_shared_memory = False
         if self.dp_shared_memory and not self.cpu_offload:
             raise ValueError("dp_shared_memory requires cpu_offload=True")
         if self.use_thp and (not self.cpu_offload or self.dp_shared_memory):
@@ -83,7 +103,9 @@ class EngramConfig:
 
     def resolve_dp_shared_memory(self, parallel_config: "ParallelConfig") -> None:
         """Share host tables by default wherever the configuration permits."""
-        if self.dp_shared_memory is None:
+        if self.file_backed:
+            self.dp_shared_memory = False
+        elif self.dp_shared_memory is None:
             self.dp_shared_memory = (
                 self.cpu_offload
                 and not self.use_thp

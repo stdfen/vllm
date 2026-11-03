@@ -1398,6 +1398,7 @@ class ModelConfig:
                 # imports during override detection (e.g., MXFP4 imports Triton)
                 "mxfp4",
                 "gpt_oss_mxfp4",
+                "exl3",
                 "deepseek_v4_fp8",
                 "humming",
             ]

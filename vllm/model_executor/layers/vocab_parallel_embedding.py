@@ -29,6 +29,7 @@ from vllm.model_executor.layers.quantization.base_config import (
 )
 from vllm.model_executor.layers.quantization.utils.fp8_utils import is_fp8
 from vllm.model_executor.layers.utils import dispatch_unquantized_gemm
+from vllm.model_executor.weight_staging import copy_loaded_weight
 from vllm.model_executor.parameter import BasevLLMParameter
 from vllm.model_executor.utils import set_weight_attrs
 from vllm.platforms import current_platform
@@ -491,7 +492,7 @@ class VocabParallelEmbedding(PluggableLayer):
             ):
                 loaded_weight = loaded_weight.reshape(1)
             assert param.data.shape == loaded_weight.shape
-            param.data.copy_(loaded_weight)
+            copy_loaded_weight(param.data, loaded_weight)
             return
 
         # Shard indexes for loading the weight
@@ -501,13 +502,13 @@ class VocabParallelEmbedding(PluggableLayer):
         # If param packed on the same dim we are sharding on, then
         # need to adjust offsets of loaded weight by pack_factor.
         if packed_dim is not None and packed_dim == output_dim:
-            packed_factor = (
-                param.packed_factor
-                if isinstance(param, BasevLLMParameter)
-                else param.pack_factor
+            packed_factor = getattr(
+                param, "packed_factor", getattr(param, "pack_factor", None)
             )
+            if packed_factor is None:
+                raise AttributeError("packed vocab parameter must define packed_factor")
             assert loaded_weight.shape[output_dim] == (
-                self.org_vocab_size // param.packed_factor
+                self.org_vocab_size // packed_factor
             )
             start_idx = start_idx // packed_factor
             shard_size = shard_size // packed_factor
@@ -516,8 +517,22 @@ class VocabParallelEmbedding(PluggableLayer):
 
         # Copy the data. Select chunk corresponding to current shard.
         loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
-        param[: loaded_weight.shape[0]].data.copy_(loaded_weight)
-        param[loaded_weight.shape[0] :].data.fill_(0)
+        param_data = param.data
+        for dim, (param_size, loaded_size) in enumerate(
+            zip(param_data.shape, loaded_weight.shape)
+        ):
+            if dim != output_dim:
+                assert param_size == loaded_size
+        assert loaded_weight.shape[output_dim] <= param_data.shape[output_dim]
+        loaded_region = param_data.narrow(
+            output_dim, 0, loaded_weight.shape[output_dim]
+        )
+        copy_loaded_weight(loaded_region, loaded_weight)
+        padding_size = param_data.shape[output_dim] - loaded_weight.shape[output_dim]
+        if padding_size:
+            param_data.narrow(
+                output_dim, loaded_weight.shape[output_dim], padding_size
+            ).fill_(0)
 
     def forward(self, input_):
         """Look up IDs, optionally reducing contributions from vocabulary shards."""

@@ -25,6 +25,7 @@ from vllm.models.deepseek_v41.sparse_mla import (
     DeepseekV4SparseMLAMetadataBuilder,
     DeepseekV41SparseSWAMetadataBuilder,
 )
+from vllm.platforms import current_platform
 from vllm.platforms.interface import DeviceCapability
 from vllm.utils.flashinfer import flashinfer_trtllm_batch_decode_sparse_mla_dsv4
 from vllm.v1.attention.backend import (
@@ -115,6 +116,8 @@ class DeepseekV4FlashInferMLASparseBackend(DeepseekV4SparseMLABackend):
 
     @staticmethod
     def get_supported_kernel_block_sizes(kv_cache_spec=None) -> list[int | MultipleOf]:
+        if current_platform.is_device_capability_family(120):
+            return [64, 128]
         return [128]
 
     @staticmethod
@@ -605,6 +608,10 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
     backend_cls = DeepseekV4FlashInferMLASparseBackend
     swa_backend_cls = DeepseekSparseSWAFlashInferBackend
     use_fp8_ds_mla_layout: ClassVar[bool] = True
+    # FlashInfer SM120 DSV4 sparse decode is instantiated only for page-64.
+    # Align cache allocation with that ABI so warmup and serving cannot emit
+    # the unsupported page_block_size=32 shape.
+    swa_cache_block_size: ClassVar[int] = 64
 
     @staticmethod
     def _get_workspace(device: torch.device) -> torch.Tensor:

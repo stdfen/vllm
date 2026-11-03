@@ -1,0 +1,40 @@
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:v0.32.0-arm64-exl3-runtime
+FROM ${VLLM_BASE_IMAGE}
+
+ARG VLLM_SITE=/usr/local/lib/python3.12/dist-packages/vllm
+
+COPY vllm/model_executor/layers/quantization/__init__.py \
+    ${VLLM_SITE}/model_executor/layers/quantization/__init__.py
+COPY vllm/model_executor/layers/quantization/exl3 \
+    ${VLLM_SITE}/model_executor/layers/quantization/exl3
+COPY vllm/model_executor/weight_staging.py \
+    ${VLLM_SITE}/model_executor/weight_staging.py
+COPY vllm/model_executor/model_loader/weight_utils.py \
+    ${VLLM_SITE}/model_executor/model_loader/weight_utils.py
+COPY vllm/model_executor/layers/vocab_parallel_embedding.py \
+    ${VLLM_SITE}/model_executor/layers/vocab_parallel_embedding.py
+COPY vllm/config/engram.py ${VLLM_SITE}/config/engram.py
+COPY vllm/config/model.py ${VLLM_SITE}/config/model.py
+COPY vllm/envs.py ${VLLM_SITE}/envs.py
+COPY vllm/models/deepseek_v41/common/engram.py \
+    ${VLLM_SITE}/models/deepseek_v41/common/engram.py
+COPY vllm/models/deepseek_v41/common/engram_file.py \
+    ${VLLM_SITE}/models/deepseek_v41/common/engram_file.py
+COPY vllm/models/deepseek_v41/attention.py \
+    ${VLLM_SITE}/models/deepseek_v41/attention.py
+COPY vllm/models/deepseek_v41/compressor.py \
+    ${VLLM_SITE}/models/deepseek_v41/compressor.py
+COPY vllm/models/deepseek_v41/nvidia/model.py \
+    ${VLLM_SITE}/models/deepseek_v41/nvidia/model.py
+COPY vllm/models/deepseek_v41/nvidia/vl_model.py \
+    ${VLLM_SITE}/models/deepseek_v41/nvidia/vl_model.py
+COPY vllm/models/deepseek_v41/nvidia/dspark.py \
+    ${VLLM_SITE}/models/deepseek_v41/nvidia/dspark.py
+COPY vllm/models/deepseek_v4/nvidia/ops/o_proj.py \
+    ${VLLM_SITE}/models/deepseek_v4/nvidia/ops/o_proj.py
+COPY tools/exl3/manifest.py tools/exl3/tp2_preflight.py /opt/vllm-exl3/
+COPY docker/exl3/run_tp2.sh /opt/vllm-exl3/run_tp2.sh
+
+RUN chmod 0755 /opt/vllm-exl3/run_tp2.sh
+
+RUN python3 -c "import torch; import exllamav3_ext; from vllm.model_executor.layers.quantization.exl3.config import Exl3Config; assert Exl3Config.get_name() == 'exl3'"

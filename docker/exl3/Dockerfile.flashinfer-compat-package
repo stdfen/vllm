@@ -1,0 +1,10 @@
+FROM vllm/vllm-openai:v0.32.0-arm64-exl3-vllm
+
+RUN rm -rf \
+    /usr/local/lib/python3.12/dist-packages/flashinfer \
+    /usr/local/lib/python3.12/dist-packages/flashinfer_cubin \
+    /usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache \
+    /usr/local/lib/python3.12/dist-packages/flashinfer_*.dist-info
+
+ADD flashinfer-0.6.18-cu130.tar.zst /usr/local/lib/python3.12/dist-packages/
+RUN python3 -c "import flashinfer, torch; assert flashinfer.__version__ == '0.6.18'; assert torch.__version__ == '2.13.0+cu130'"
