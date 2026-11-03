@@ -82,6 +82,18 @@ from vllm.v1.kv_cache_interface import (
 logger = init_logger(__name__)
 
 
+def _dsv41_cache_block_size(block_size: int, compress_ratio: int) -> int:
+    """Keep 64 stored states per DeepSeek-V4.1 page on SM120.
+
+    The GB10 DeepGEMM indexer accepts only 32/64 states per page.  A cache
+    compressed by ``r`` therefore needs ``64 * r`` tokens per physical page,
+    while ratio-one caches use the CLI's 64-token block unchanged.
+    """
+    if current_platform.is_device_capability_family(120) and compress_ratio > 1:
+        return block_size * compress_ratio
+    return block_size
+
+
 def _replace_layer_index(prefix: str, layer_id: int) -> str:
     """Swap the layer index inside a ``...layers.<idx>...`` prefix."""
     new_prefix, n = re.subn(r"\.layers\.\d+\.", f".layers.{layer_id}.", prefix)
@@ -194,6 +206,9 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
     # bf16 / per-tensor fp8 KV row. Backends can override the instance hook when
     # a single attention class dispatches across arch-specific layouts.
     use_fp8_ds_mla_layout: ClassVar[bool] = True
+    # Sliding-window KV page size. Most backends accept the historical
+    # 32-token page. Backends with a stricter kernel ABI override this value.
+    swa_cache_block_size: ClassVar[int] = 32
     # Prefill is processed in fixed-size chunks; this bounds the bf16 kv-gather
     # workspace allocated in _forward_prefill and is also read by the dummy-run
     # path to pre-reserve that workspace.
@@ -561,7 +576,7 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
             prefix=f"{prefix}.swa_cache",
             cache_config=cache_config,
             backend_cls=self.swa_backend_cls,
-            block_size=32,
+            block_size=self.swa_cache_block_size,
             packed_bytes_per_token=self.swa_bytes_per_token,
             packed_page_alignment=self.kv_page_alignment,
             bounded_replay=swa_bounded_replay,
@@ -952,9 +967,14 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
             compressor = self.compressor
 
             def compressor_kv_score() -> torch.Tensor:
+                projection = compressor.fused_wkv_wgate
+                if hasattr(projection, "trellis"):
+                    return projection.quant_method.apply(
+                        projection, hidden_states
+                    ).float()
                 return torch.mm(
                     hidden_states,
-                    compressor.fused_wkv_wgate.weight.T,
+                    projection.weight.T,
                     out_dtype=torch.float32,
                 )
 
@@ -1147,7 +1167,9 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
         # use natural element-size pages.
         uses_fp8_ds_mla_layout = self.kv_cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla")
         return MLAAttentionSpec(
-            block_size=vllm_config.cache_config.block_size,
+            block_size=_dsv41_cache_block_size(
+                vllm_config.cache_config.block_size, self.compress_ratio
+            ),
             num_kv_heads=1,
             head_size=self.head_dim,
             dtype=torch.uint8 if uses_fp8_ds_mla_layout else self.kv_cache_torch_dtype,
@@ -1217,7 +1239,9 @@ class DeepseekV4IndexerCache(torch.nn.Module, AttentionLayerBase):
             576 if uses_fp8_ds_mla_layout and not _use_v41_mxfp8_kv_record() else 512
         )
         return MLAAttentionSpec(
-            block_size=self.cache_config.block_size,
+            block_size=_dsv41_cache_block_size(
+                self.cache_config.block_size, self.compress_ratio
+            ),
             num_kv_heads=1,
             head_size=self.head_dim,
             dtype=self.dtype,
@@ -1343,12 +1367,13 @@ class DeepseekV4Indexer(nn.Module):
         assert cache_config is not None, "Deepseek V4 indexer requires cache_config"
         if owns_k:
             # wk maps the main compressor's (pre-RoPE) latent to index keys.
-            # The checkpoint stores it in bf16 with no quantization scales.
+            # EXL3 checkpoints pack wk while dense checkpoints keep the native
+            # weight, so let the quantization config decide per prefix.
             self.wk = ReplicatedLinear(
                 main_head_dim,
                 self.head_dim,
                 bias=False,
-                quant_config=None,
+                quant_config=quant_config,
                 prefix=f"{prefix}.wk",
             )
             self.k_norm = RMSNorm(self.head_dim, config.rms_norm_eps)

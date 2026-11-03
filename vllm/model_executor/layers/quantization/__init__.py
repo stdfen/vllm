@@ -36,6 +36,7 @@ QuantizationMethods = Literal[
     "mxfp4",
     "gpt_oss_mxfp4",
     "deepseek_v4_fp8",
+    "exl3",
     "online",
     # Below are online quant shorthand names (see vllm.config.quantization).
     # Listed here as strings to avoid a circular import; kept in sync with
@@ -137,6 +138,7 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
         CompressedTensorsConfig,
     )
     from .experts_int8 import ExpertsInt8Config
+    from .exl3.config import Exl3Config
     from .fbgemm_fp8 import FBGEMMFp8Config
     from .fp8 import Fp8Config
     from .fp_quant import FPQuantConfig
@@ -169,6 +171,7 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
         "gptq_marlin": AutoGPTQConfig,
         "compressed-tensors": CompressedTensorsConfig,
         "experts_int8": ExpertsInt8Config,
+        "exl3": Exl3Config,
         "quark": QuarkConfig,
         "moe_wna16": MoeWNA16Config,
         "torchao": TorchAOConfig,

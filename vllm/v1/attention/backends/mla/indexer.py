@@ -369,7 +369,12 @@ class DeepseekV41IndexerBackend(DeepseekV4IndexerBackend):
 
     @staticmethod
     def get_supported_kernel_block_sizes(kv_cache_spec=None) -> list[int | MultipleOf]:
-        return [64 if current_platform.is_device_capability_family(90) else 128]
+        # On SM120 the CLI block is 64 tokens. Ratio-two caches scale their
+        # physical block to 128 tokens, so both cases contain exactly 64 stored
+        # states and satisfy DeepGEMM without splitting packed BLHNC pages.
+        if current_platform.is_device_capability_family(120):
+            return [64, 128]
+        return [64] if current_platform.is_device_capability_family(90) else [128]
 
 
 @dataclass(frozen=True)

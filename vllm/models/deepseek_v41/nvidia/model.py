@@ -691,7 +691,14 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
         # DeepseekV4Attention._run_parallel_input_projections
         # (compressor kv_score, indexer.weights_proj). fused_wqa_wkv stays on
         # the default stream.
-        aux_stream_list = [torch.cuda.Stream() for _ in range(3)]
+        # EXL3 trellis kernels share a device-wide lock buffer. Running them
+        # concurrently on the three projection streams can corrupt the lock
+        # protocol (or deadlock), so serialize the GB10 EXL3 path by default.
+        aux_stream_list = (
+            None
+            if __import__("os").environ.get("DSV41_EXL3_SERIAL_STREAMS", "1") == "1"
+            else [torch.cuda.Stream() for _ in range(3)]
+        )
         # Keep mHC independent of the streams used inside attention.
         mhc_stream = torch.cuda.Stream() if supports_mhc_overlap(vllm_config) else None
         self.fuse_mhc_all_reduce = mhc_stream is not None and supports_mhc_all_reduce(
@@ -1275,6 +1282,22 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
                 # Vision weights are loaded by the outer multimodal wrapper.
                 logger.warning_once("Skipping non-text weight: %s", name)
                 continue
+            grouped_match = re.search(
+                r"\.slice\.(\d+)\.(trellis|suh|svh|mul1|mcg)$", name
+            )
+            if grouped_match:
+                slice_id = int(grouped_match.group(1))
+                mapped = name[: grouped_match.start()] + "." + grouped_match.group(2)
+                if mapped not in params_dict:
+                    head, _, leaf = mapped.rpartition(".")
+                    suffixed = f"{head}.base_layer.{leaf}"
+                    if suffixed in params_dict:
+                        mapped = suffixed
+                param = params_dict[mapped]
+                loaded = param.weight_loader(param, loaded_weight, slice_id)
+                if loaded is not False:
+                    loaded_params.add(mapped)
+                continue
             if pad_shared_expert and ".shared_experts." in name:
                 loaded_weight = self._pad_shared_expert_weight(
                     self.quant_config, name, loaded_weight
@@ -1296,7 +1319,15 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
                         name = suffixed
                 param = params_dict[name]
                 weight_loader = param.weight_loader
-                weight_loader(param, loaded_weight, shard_id)
+                try:
+                    weight_loader(param, loaded_weight, shard_id)
+                except AssertionError as exc:
+                    raise ValueError(
+                        "stacked parameter shape mismatch: "
+                        f"parameter={name!r}, checkpoint={weight_name!r}, "
+                        f"shard_id={shard_id!r}, param_shape={tuple(param.shape)}, "
+                        f"loaded_shape={tuple(loaded_weight.shape)}"
+                    ) from exc
                 loaded_params.add(name)
                 break
             else:
@@ -1482,6 +1513,11 @@ def _make_deepseek_v4_weights_mapper(
         orig_to_new_regex=scale_regex,
         orig_to_new_suffix={
             "head.weight": "lm_head.weight",
+            "head.trellis": "lm_head.trellis",
+            "head.suh": "lm_head.suh",
+            "head.svh": "lm_head.svh",
+            "head.mul1": "lm_head.mul1",
+            "head.mcg": "lm_head.mcg",
             "embed.weight": "embed_tokens.weight",
             ".ffn.gate.bias": ".ffn.gate.e_score_correction_bias",
         },
@@ -1573,6 +1609,7 @@ class DeepseekV41LLMForCausalLM(
             self.lm_head = ParallelLMHead(
                 config.vocab_size,
                 config.hidden_size,
+                quant_config=vllm_config.quant_config,
                 prefix=maybe_prefix(prefix, "lm_head"),
             )
         else:

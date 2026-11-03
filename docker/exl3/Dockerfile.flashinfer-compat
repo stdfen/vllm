@@ -1,0 +1,19 @@
+# Keep the vLLM v0.32 application/runtime intact, but use the exact
+# CUDA-13/PyTorch-2.13 FlashInfer build validated by the author's GB10 image.
+FROM m.daocloud.io/docker.io/vllm/vllm-openai:deepseekv41-flash-0909 AS author_runtime
+FROM vllm/vllm-openai:v0.32.0-arm64-exl3-vllm
+
+RUN rm -rf \
+    /usr/local/lib/python3.12/dist-packages/flashinfer \
+    /usr/local/lib/python3.12/dist-packages/flashinfer_cubin \
+    /usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache \
+    /usr/local/lib/python3.12/dist-packages/flashinfer_*.dist-info
+
+COPY --from=author_runtime /usr/local/lib/python3.12/dist-packages/flashinfer /usr/local/lib/python3.12/dist-packages/flashinfer
+COPY --from=author_runtime /usr/local/lib/python3.12/dist-packages/flashinfer_cubin /usr/local/lib/python3.12/dist-packages/flashinfer_cubin
+COPY --from=author_runtime /usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache /usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache
+COPY --from=author_runtime /usr/local/lib/python3.12/dist-packages/flashinfer_python-0.6.18.dist-info /usr/local/lib/python3.12/dist-packages/flashinfer_python-0.6.18.dist-info
+COPY --from=author_runtime /usr/local/lib/python3.12/dist-packages/flashinfer_cubin-0.6.18.dist-info /usr/local/lib/python3.12/dist-packages/flashinfer_cubin-0.6.18.dist-info
+COPY --from=author_runtime /usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache-0.6.18+cu130.dist-info /usr/local/lib/python3.12/dist-packages/flashinfer_jit_cache-0.6.18+cu130.dist-info
+
+RUN python3 -c "import flashinfer, torch; assert flashinfer.__version__ == '0.6.18'; assert torch.__version__ == '2.13.0+cu130'"

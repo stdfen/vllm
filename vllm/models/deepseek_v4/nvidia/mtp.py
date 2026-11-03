@@ -229,7 +229,11 @@ class DeepSeekV4MultiTokenPredictor(nn.Module):
         )
 
         # Three aux streams shared across all MTP layers, mirroring DeepseekV4Model.
-        aux_stream_list = [torch.cuda.Stream() for _ in range(3)]
+        aux_stream_list = (
+            None
+            if __import__("os").environ.get("DSV41_EXL3_SERIAL_STREAMS", "1") == "1"
+            else [torch.cuda.Stream() for _ in range(3)]
+        )
 
         # to map the exact layer index from weights
         self.layers = torch.nn.ModuleDict(

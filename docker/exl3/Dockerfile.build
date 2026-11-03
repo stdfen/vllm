@@ -1,0 +1,10 @@
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:v0.32.0-arm64-baseline
+FROM ${VLLM_BASE_IMAGE}
+
+# The release image contains nvcc and the CUDA runtime but deliberately omits
+# sparse-math development headers required by torch's CUDA extension headers.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libcusolver-dev-13-0 \
+        libcusparse-dev-13-0 \
+    && rm -rf /var/lib/apt/lists/*

@@ -1,0 +1,8 @@
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:v0.32.0-arm64-baseline
+FROM ${VLLM_BASE_IMAGE}
+
+ARG EXLLAMAV3_EXTENSION=exllamav3_ext.cpython-312-aarch64-linux-gnu.so
+COPY ${EXLLAMAV3_EXTENSION} \
+    /usr/local/lib/python3.12/dist-packages/exllamav3_ext.cpython-312-aarch64-linux-gnu.so
+
+RUN python3 -c "import torch; import exllamav3_ext as ext; assert torch.__version__; assert hasattr(ext, 'BC_LinearEXL3'); assert hasattr(ext, 'reconstruct')"
