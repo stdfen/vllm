@@ -1656,6 +1656,20 @@ class DeepseekV41LLMForCausalLM(
     ) -> torch.Tensor:
         return self.logits_processor(self.lm_head, hidden_states, skip_gather=True)
 
+    def compute_logits_argmax(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor:
+        """[rows] int64: the first index of each row's maximum in
+        compute_logits(hidden_states) (rows without NaN), without all-gathering
+        the logits (VLLM_GREEDY_LOCAL_ARGMAX). Each rank takes the max and argmax
+        of its own vocabulary columns, padding masked, and all-gathers one
+        (value, index) pair per row (LogitsProcessor.get_top_tokens); equal
+        values resolve to the lower rank, i.e. the lower vocabulary index. The
+        head and the logits processor share config.vocab_size, so these are the
+        columns compute_logits returns."""
+        return self.logits_processor.get_top_tokens(self.lm_head, hidden_states)
+
     @staticmethod
     def get_model_state_cls():
         from .model_state import DeepseekV41ModelState

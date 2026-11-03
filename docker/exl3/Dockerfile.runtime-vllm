@@ -32,6 +32,18 @@ COPY vllm/models/deepseek_v41/nvidia/dspark.py \
     ${VLLM_SITE}/models/deepseek_v41/nvidia/dspark.py
 COPY vllm/models/deepseek_v4/nvidia/ops/o_proj.py \
     ${VLLM_SITE}/models/deepseek_v4/nvidia/ops/o_proj.py
+COPY vllm/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py \
+    ${VLLM_SITE}/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py
+COPY vllm/v1/attention/backends/mla/sparse_swa.py \
+    ${VLLM_SITE}/v1/attention/backends/mla/sparse_swa.py
+COPY vllm/v1/worker/gpu/attn_utils.py \
+    ${VLLM_SITE}/v1/worker/gpu/attn_utils.py
+COPY vllm/v1/worker/gpu/model_runner.py \
+    ${VLLM_SITE}/v1/worker/gpu/model_runner.py
+COPY vllm/v1/worker/gpu/sample/greedy_local_argmax.py \
+    ${VLLM_SITE}/v1/worker/gpu/sample/greedy_local_argmax.py
+COPY vllm/v1/worker/gpu/spec_decode/rejection_sampler_utils.py \
+    ${VLLM_SITE}/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
 COPY tools/exl3/manifest.py tools/exl3/tp2_preflight.py /opt/vllm-exl3/
 COPY docker/exl3/run_tp2.sh /opt/vllm-exl3/run_tp2.sh
 

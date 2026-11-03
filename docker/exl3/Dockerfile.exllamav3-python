@@ -1,0 +1,9 @@
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:v0.32.0-dsv41-v20
+FROM ${VLLM_BASE_IMAGE}
+
+# The runtime extension is already compiled for sm_121 in the base image.  Add
+# the matching v1.6.0 Python package without rebuilding or replacing that ABI.
+COPY . /tmp/exllamav3
+RUN EXLLAMA_NOCOMPILE=1 python3 -m pip install --no-deps /tmp/exllamav3 \
+    && rm -rf /tmp/exllamav3 \
+    && python3 -c "from importlib.metadata import version; import exllamav3, exllamav3_ext; from exllamav3.modules.quant.exl3 import LinearEXL3; assert version('exllamav3') == '1.6.0'"

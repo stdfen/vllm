@@ -1,0 +1,8 @@
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:v0.32.0-dsv41-v20-core
+FROM ${VLLM_BASE_IMAGE}
+
+COPY *.whl /tmp/wheels/
+RUN python3 -m pip install --no-deps /tmp/wheels/exllamav3-1.6.0-*.whl \
+        /tmp/wheels/vllm_exl3_moe-0.1.0.dev0-*.whl \
+    && rm -rf /tmp/wheels \
+    && python3 -c "from importlib.metadata import version; import torch, exllamav3_ext; from exllamav3.modules.quant.exl3 import LinearEXL3; assert version('exllamav3') == '1.6.0'; assert version('vllm-exl3-moe') == '0.1.0.dev0'"

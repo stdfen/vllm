@@ -1,0 +1,10 @@
+ARG VLLM_BASE_IMAGE=vllm/vllm-openai:v0.32.0-dsv41-v20-core
+FROM ${VLLM_BASE_IMAGE}
+
+# Build this stage with the pinned sudoingX recipe `patches` directory as the
+# Docker context.  The plugin owns the `deepseek_v41_exl3` checkpoint format;
+# the base image owns the vLLM 0.32.0 integration hooks.
+COPY exl3_moe /tmp/exl3_moe
+RUN python3 -m pip install --no-deps /tmp/exl3_moe \
+    && rm -rf /tmp/exl3_moe \
+    && python3 -c "from importlib.metadata import version; assert version('vllm-exl3-moe') == '0.1.0.dev0'"

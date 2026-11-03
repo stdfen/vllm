@@ -1326,3 +1326,88 @@ def rejection_sample(
         PADDED_RESAMPLE_NUM_BLOCKS=padded_resample_num_blocks,
     )
     return sampled, num_sampled
+
+
+@triton.jit
+def _greedy_verify_kernel(
+    # [num_reqs, num_speculative_steps + 1]
+    sampled_ptr,
+    sampled_stride,
+    # [num_reqs]
+    num_sampled_ptr,
+    # [num_logits]
+    target_argmax_ptr,
+    # [num_logits]
+    draft_sampled_ptr,
+    # [num_reqs + 1]
+    cu_num_logits_ptr,
+):
+    req_idx = tl.program_id(0)
+    start_idx = tl.load(cu_num_logits_ptr + req_idx).to(tl.int64)
+    end_idx = tl.load(cu_num_logits_ptr + req_idx + 1)
+    num_draft_tokens = end_idx - start_idx - 1
+
+    # The greedy branch of _rejection_kernel, with the target argmax read
+    # directly instead of reduced from per-block logits stats.
+    accepted_length = tl.zeros((), tl.int64)
+    verifying = True
+    for i in range(num_draft_tokens):
+        if verifying:
+            logit_idx = start_idx + i
+            draft_sampled = tl.load(draft_sampled_ptr + logit_idx + 1).to(tl.int64)
+            # -1 is used for placeholder draft token ids that should be rejected.
+            is_valid_draft = draft_sampled >= 0
+            target_argmax = tl.load(target_argmax_ptr + logit_idx)
+            accepted = (target_argmax == draft_sampled) & is_valid_draft
+            verifying = accepted
+            accepted_length += accepted
+            tl.store(
+                sampled_ptr + req_idx * sampled_stride + i,
+                draft_sampled if accepted else target_argmax,
+            )
+    if accepted_length == num_draft_tokens:
+        # Every draft accepted: the bonus token, which _resample_kernel and
+        # _insert_resampled_kernel take as the argmax of the last row at
+        # temperature 0.
+        tl.store(
+            sampled_ptr + req_idx * sampled_stride + accepted_length,
+            tl.load(target_argmax_ptr + end_idx - 1),
+        )
+    tl.store(num_sampled_ptr + req_idx, accepted_length + 1)
+
+
+def greedy_verify(
+    # [num_logits]
+    target_argmax: torch.Tensor,
+    # [num_logits]
+    draft_sampled: torch.Tensor,
+    # [num_reqs + 1]
+    cu_num_logits: torch.Tensor,
+    num_speculative_steps: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """rejection_sample() for a batch whose requests are all greedy (temperature
+    0, no synthetic rates), from the target's argmax of each logits row.
+
+    Greedy verification reads nothing else from the target logits: a draft is
+    accepted while it equals the target argmax of the row before it, the first
+    rejected row contributes its target argmax, and when every draft is accepted
+    the bonus row does. Same sampled tokens and counts as rejection_sample(), and
+    the slots past num_sampled are left unwritten there as here.
+    """
+    assert target_argmax.ndim == 1 and target_argmax.is_contiguous()
+    assert draft_sampled.shape == target_argmax.shape and draft_sampled.is_contiguous()
+    num_reqs = cu_num_logits.shape[0] - 1
+    sampled = draft_sampled.new_empty(
+        num_reqs, num_speculative_steps + 1, dtype=torch.int64
+    )
+    num_sampled = sampled.new_empty(num_reqs, dtype=torch.int32)
+    _greedy_verify_kernel[(num_reqs,)](
+        sampled,
+        sampled.stride(0),
+        num_sampled,
+        target_argmax,
+        draft_sampled,
+        cu_num_logits,
+        num_warps=1,
+    )
+    return sampled, num_sampled

@@ -497,6 +497,39 @@ def build_attn_metadata(
     # Also at capture, so FULL graphs share the batch-level buffers.
     cached_metadata: dict[tuple[KVCacheSpec, type], Any] = {}
     num_kv_cache_groups = len(kv_cache_config.kv_cache_groups)
+    with _swa_deferred(for_cudagraph_capture):
+        _build_groups(
+            attn_metadata, attn_groups, num_kv_cache_groups, block_tables, slot_mappings,
+            causal, model_specific_attn_metadata, num_reqs, is_prefilling, fast_prefill,
+            query_start_loc_gpu, query_start_loc_cpu, seq_lens, seq_lens_cpu_upper_bound,
+            max_seq_len, num_tokens, max_query_len, dcp_local_seq_lens,
+            dcp_local_seq_lens_cpu_upper_bound, positions, mm_req_doc_ranges,
+            rswa_prefix_lens, req_idx, ubatch_idx, for_cudagraph_capture, cached_metadata,
+        )
+    return attn_metadata
+
+
+def _swa_deferred(for_cudagraph_capture: bool):
+    """VLLM_DSV41_SWA_BATCH=1: DeepSeek-V4.1's pure-decode SWA builds of every KV cache
+    group in one launch after the loop (sparse_swa.deferred_decode_builds)."""
+    import contextlib
+
+    if for_cudagraph_capture:
+        return contextlib.nullcontext()
+    from vllm.v1.attention.backends.mla import sparse_swa
+
+    return sparse_swa.deferred_decode_builds()
+
+
+def _build_groups(
+    attn_metadata, attn_groups, num_kv_cache_groups, block_tables, slot_mappings,
+    causal, model_specific_attn_metadata, num_reqs, is_prefilling, fast_prefill,
+    query_start_loc_gpu, query_start_loc_cpu, seq_lens, seq_lens_cpu_upper_bound,
+    max_seq_len, num_tokens, max_query_len, dcp_local_seq_lens,
+    dcp_local_seq_lens_cpu_upper_bound, positions, mm_req_doc_ranges,
+    rswa_prefix_lens, req_idx, ubatch_idx, for_cudagraph_capture, cached_metadata,
+) -> None:
+    token_to_req_indices: torch.Tensor | None = None
     for i in range(num_kv_cache_groups):
         if not attn_groups[i]:
             continue
@@ -578,7 +611,6 @@ def build_attn_metadata(
             for layer_name in attn_group.layer_names:
                 attn_metadata[layer_name] = metadata
         token_to_req_indices = common_attn_metadata._token_to_req_indices_cache
-    return attn_metadata
 
 
 def compute_mm_prefix_ranges(

@@ -144,6 +144,10 @@ from vllm.v1.worker.gpu.sample.batch_shard import (
     all_to_all_logits,
     gather_sampler_output,
 )
+from vllm.v1.worker.gpu.sample.greedy_local_argmax import (
+    GreedyLocalArgmax,
+    maybe_create_greedy_local_argmax,
+)
 from vllm.v1.worker.gpu.sample.logits_processor import build_custom_logits_processors
 from vllm.v1.worker.gpu.sample.output import SamplerOutput
 from vllm.v1.worker.gpu.sample.prompt_logprob import PromptLogprobsWorker
@@ -337,6 +341,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.batch_sharder: BatchSharder | None = None
         self.prompt_logprobs_worker: PromptLogprobsWorker | None = None
         self.structured_outputs_worker: StructuredOutputsWorker | None = None
+        # VLLM_GREEDY_LOCAL_ARGMAX: all-greedy steps sample without the logits
+        # all-gather (sample/greedy_local_argmax.py).
+        self.greedy_argmax: GreedyLocalArgmax | None = None
         self.cudagraph_manager: ModelCudaGraphManager | None = None
 
         # LoRA-related workers.
@@ -521,6 +528,16 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 device=self.device,
                 mask_stride=self.decode_query_len,
                 num_bonus_tokens=self.model_state.num_new_sampled_tokens_per_step,
+            )
+            self.greedy_argmax = maybe_create_greedy_local_argmax(
+                self.model,
+                self.sampler,
+                self.rejection_sampler,
+                self.prompt_logprobs_worker,
+                self.speculator,
+                lora=bool(self.lora_config),
+                batch_sharded=self.batch_sharder is not None,
+                device=self.device,
             )
 
         if self.is_pooling_model and self.is_last_pp_rank:
@@ -1595,6 +1612,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         input_batch: InputBatch,
         grammar_output: GrammarOutput | None,
     ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
+        if self.greedy_argmax is not None and self.greedy_argmax.applies(
+            input_batch, grammar_output
+        ):
+            # Every request greedy, nothing reading or editing the logits: the
+            # same tokens from (value, index) pairs per vocabulary shard.
+            return self._sample_greedy_argmax(hidden_states, input_batch)
+
         shard_metadata = None
         global_input_batch = input_batch
         if self.batch_sharder is not None:
@@ -1674,6 +1698,24 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
         assert sampler_output is not None
+        return sampler_output, sampler_output.num_sampled, sampler_output.num_rejected
+
+    def _sample_greedy_argmax(
+        self, hidden_states: torch.Tensor, input_batch: InputBatch
+    ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
+        """sample() for a step GreedyLocalArgmax.applies to: the same tokens and
+        counts without all-gathering the logits."""
+        assert self.greedy_argmax is not None
+        invalid_drafts = None
+        if self.depth_policy is not None and input_batch.num_draft_tokens > 0:
+            # Rows past the depth ran without routed experts: never accept them.
+            dead = getattr(input_batch, "depth_dead_rows", None)
+            if dead is None or dead.shape[0] != input_batch.logits_indices.shape[0]:
+                raise RuntimeError("DSpark depth policy: no depth mask for this batch")
+            invalid_drafts = dead
+        sampler_output = self.greedy_argmax.sample(
+            hidden_states, input_batch, invalid_drafts
+        )
         return sampler_output, sampler_output.num_sampled, sampler_output.num_rejected
 
     def postprocess_sampled(

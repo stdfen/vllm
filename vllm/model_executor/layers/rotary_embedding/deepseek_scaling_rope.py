@@ -221,6 +221,51 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbeddingBase):
             return self.forward_native(positions, query, key, offsets)
 
 
+# dsv41 patch 0024: slack rows a DeepSeek-V4 RoPE table keeps past the furthest
+# position the engine schedules.
+_DSV41_ROPE_MARGIN = 2048
+
+
+def _dsv41_rope_rows(full: float) -> float:
+    """dsv41 patch 0024: how many rows of a DeepSeek-V4 fp32 cos / sin table to build.
+
+    The checkpoint asks for max_position_embeddings x factor rows (V4.1: 1,048,576,
+    256 MiB a table at rotary dim 64). Positions stay below
+    max(max_model_len, max_num_batched_tokens): requests stop at max_model_len,
+    DSpark clamps its draft block to max_model_len - 1, dummy runs stay inside the
+    token budget. Build that + _DSV41_ROPE_MARGIN rows. Each row is computed on its
+    own (t x inv_freq, then cos / sin), so the rows kept are the same bits. Without
+    a vLLM config (the layer built alone) or with VLLM_DSV41_ROPE_CAP=0: the full
+    table.
+    """
+    import os
+
+    if os.environ.get("VLLM_DSV41_ROPE_CAP", "1") == "0":
+        return full
+    from vllm.config import get_current_vllm_config_or_none
+
+    config = get_current_vllm_config_or_none()
+    model_config = getattr(config, "model_config", None)
+    if model_config is None:
+        return full
+    scheduler_config = getattr(config, "scheduler_config", None)
+    reach = max(
+        model_config.max_model_len,
+        getattr(scheduler_config, "max_num_batched_tokens", 0) or 0,
+    )
+    rows = min(full, reach + _DSV41_ROPE_MARGIN)
+    if rows < full:
+        from vllm.logger import init_logger
+
+        init_logger(__name__).info_once(
+            "DeepSeek-V4 RoPE tables: %d of %d rows (patch 0024; "
+            "VLLM_DSV41_ROPE_CAP=0 builds them whole)",
+            int(rows),
+            int(full),
+        )
+    return rows
+
+
 class DeepseekV4ScalingRotaryEmbedding(DeepseekScalingRotaryEmbedding):
     """RotaryEmbedding extended with YaRN method.
 
@@ -244,7 +289,7 @@ class DeepseekV4ScalingRotaryEmbedding(DeepseekScalingRotaryEmbedding):
     def _compute_cos_sin_cache(self) -> torch.Tensor:
         inv_freq = self._compute_inv_freq(self.scaling_factor)
         t = torch.arange(
-            self.max_position_embeddings * self.scaling_factor,
+            _dsv41_rope_rows(self.max_position_embeddings * self.scaling_factor),
             device=inv_freq.device,
             dtype=torch.float32,
         )

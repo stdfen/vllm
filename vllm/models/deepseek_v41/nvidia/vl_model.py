@@ -314,6 +314,9 @@ class DeepseekV41ForCausalLM(
     def compute_logits_local(self, hidden_states: torch.Tensor) -> torch.Tensor:
         return self.language_model.compute_logits_local(hidden_states)
 
+    def compute_logits_argmax(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return self.language_model.compute_logits_argmax(hidden_states)
+
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
         return self.language_model.get_expert_mapping()
 
