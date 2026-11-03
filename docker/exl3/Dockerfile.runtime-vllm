@@ -20,6 +20,8 @@ COPY vllm/models/deepseek_v41/common/engram.py \
     ${VLLM_SITE}/models/deepseek_v41/common/engram.py
 COPY vllm/models/deepseek_v41/common/engram_file.py \
     ${VLLM_SITE}/models/deepseek_v41/common/engram_file.py
+COPY vllm/models/deepseek_v41/common/engram_disk.cpp \
+    ${VLLM_SITE}/models/deepseek_v41/common/engram_disk.cpp
 COPY vllm/models/deepseek_v41/attention.py \
     ${VLLM_SITE}/models/deepseek_v41/attention.py
 COPY vllm/models/deepseek_v41/compressor.py \

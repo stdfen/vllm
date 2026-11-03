@@ -35,6 +35,7 @@ chunk-by-chunk while an n-gram at position ``p`` needs the token ids at
 """
 
 import ctypes
+import json
 import mmap
 import os
 import tempfile
@@ -602,6 +603,60 @@ class NgramHashState(nn.Module):
         return output
 
 
+def _safetensors_tensor_offset(path: str, name: str) -> int:
+    """Absolute byte offset of tensor `name` inside a safetensors file."""
+    with open(path, "rb") as f:
+        header_len = int.from_bytes(f.read(8), "little")
+        header = json.loads(f.read(header_len))
+    return 8 + header_len + header[name]["data_offsets"][0]
+
+
+def _resolve_engram_disk_source(layer_id: int) -> tuple[str, int, str, int]:
+    """(weight file, offset, scale file, offset) of a layer's Engram table in
+    the checkpoint, for EngramConfig.disk_offload."""
+    model_config = get_current_vllm_config().model_config
+    model_dir = model_config.model
+    if not os.path.isdir(model_dir):
+        from huggingface_hub import snapshot_download
+
+        model_dir = snapshot_download(
+            model_dir, revision=model_config.revision, local_files_only=True
+        )
+    with open(os.path.join(model_dir, "model.safetensors.index.json")) as f:
+        weight_map = json.load(f)["weight_map"]
+    source: list = []
+    for suffix in ("weight", "scale"):
+        name = f"layers.{layer_id}.engram.embed.{suffix}"
+        path = os.path.join(model_dir, weight_map[name])
+        source += [path, _safetensors_tensor_offset(path, name)]
+    return tuple(source)  # type: ignore[return-value]
+
+
+_ENGRAM_DISK_EXT = None
+
+
+def _load_engram_disk_ext():
+    """The host-side row reader (engram_disk.cpp), JIT-built once per env."""
+    global _ENGRAM_DISK_EXT
+    if _ENGRAM_DISK_EXT is None:
+        from torch.utils.cpp_extension import load
+
+        _ENGRAM_DISK_EXT = load(
+            name="vllm_engram_disk",
+            sources=[os.path.join(os.path.dirname(__file__), "engram_disk.cpp")],
+            extra_cflags=["-O2"],
+            with_cuda=True,
+            verbose=False,
+        )
+    return _ENGRAM_DISK_EXT
+
+
+def _engram_disk_noop_loader(
+    param: torch.nn.Parameter, loaded_weight: torch.Tensor
+) -> None:
+    """Disk-offloaded tables are read from the shards at lookup time."""
+
+
 def _engram_head_shard_weight_loader(
     param: torch.nn.Parameter, loaded_weight: torch.Tensor
 ) -> None:
@@ -962,6 +1017,9 @@ class ParallelEngramEmbedding(nn.Module):
         use_thp: bool = False,
         file_table_dir: str | None = None,
         file_tensor_prefix: str | None = None,
+        disk_source: tuple[str, int, str, int] | None = None,
+        disk_threads: int = 32,
+        disk_cache_rows: int = 0,
     ) -> None:
         super().__init__()
         assert head_sizes and all(size > 0 for size in head_sizes)
@@ -970,6 +1028,16 @@ class ParallelEngramEmbedding(nn.Module):
         self.dp_shared_memory = dp_shared_memory
         self.use_thp = use_thp
         self.file_backed = file_table_dir is not None
+        self.disk_offload = disk_source is not None
+        if self.file_backed and self.disk_offload:
+            raise ValueError("Engram file_backed and disk_offload are mutually exclusive")
+        if self.disk_offload:
+            if not cpu_offload or dp_shared_memory or use_thp:
+                raise ValueError(
+                    "Engram disk offload requires cpu_offload without "
+                    "dp_shared_memory or use_thp"
+                )
+            self._weight_loader = _engram_disk_noop_loader
         self.dp_size = get_engram_dp_size()
         if dp_shared_memory:
             if not cpu_offload:
@@ -1028,7 +1096,51 @@ class ParallelEngramEmbedding(nn.Module):
                 self.dim,
                 self.block_size,
             )
-        if cpu_offload:
+        self._disk = None
+        self._disk_views: tuple[torch.Tensor, torch.Tensor] | None = None
+        self._disk_recorded = False
+        if self.disk_offload:
+            assert disk_source is not None
+            weight_file, weight_offset, scale_file, scale_offset = disk_source
+            self._disk = _load_engram_disk_ext().EngramDiskTable(
+                weight_file,
+                weight_offset,
+                scale_file,
+                scale_offset,
+                self.vocab_start_idx,
+                self.part_num_embeddings,
+                dim,
+                dim // block_size,
+                disk_cache_rows,
+                disk_threads,
+            )
+            # Spin mode (VLLM_ENGRAM_DISK_SPIN_MS > 0): the lookup waits on a
+            # flag in pinned memory that one spinning proxy thread sets after
+            # reading the rows with one batch of O_DIRECT AIO reads, instead of
+            # a CUDA host node and a woken thread pool (engram_disk.cpp).
+            spin_ms = int(os.environ.get("VLLM_ENGRAM_DISK_SPIN_MS", "0"))
+            mode = (
+                self._disk.enable_spin(
+                    spin_ms,
+                    256,
+                    int(os.environ.get("VLLM_ENGRAM_DISK_KEEPALIVE_US", "2000")),
+                    512,
+                )
+                if spin_ms > 0
+                else self._disk.mode()
+            )
+            logger.info(
+                "Engram table read from disk at lookup time: %d rows x %d "
+                "(%.2f GiB) from %s, %d reader threads, %d cached rows; %s",
+                self.part_num_embeddings,
+                dim,
+                self.part_num_embeddings * (dim + dim // block_size) / 1024**3,
+                weight_file,
+                disk_threads,
+                disk_cache_rows,
+                mode,
+            )
+        elif cpu_offload:
             # Constant dummy values avoid randomizing huge CPU lookup tables.
             set_weight_attrs(self.weight, {"dummy_weight_value": 1.0})
             # The ue8m0 encoding of scale 1.0 is exponent byte 127.
@@ -1063,6 +1175,12 @@ class ParallelEngramEmbedding(nn.Module):
             self._weight_loader = storage.load_weight
             return storage.weight, storage.weight_scale_inv
         scale_dim = self.dim // self.block_size
+        if self.disk_offload:
+            # Placeholders: the rows stay in the checkpoint and are read per lookup.
+            return (
+                torch.empty(1, self.dim, dtype=torch.float8_e4m3fn, device="cpu"),
+                torch.empty(1, scale_dim, dtype=torch.uint8, device="cpu"),
+            )
         if not self.cpu_offload:
             return (
                 torch.empty(
@@ -1134,6 +1252,9 @@ class ParallelEngramEmbedding(nn.Module):
 
         `background` limits the grid to leave SMs for concurrent work.
         """
+        if self.disk_offload:
+            self._disk_lookup(indices, out, background)
+            return
         rows = indices.shape[0] * self.part_n_hash_cols
         if not rows:
             return
@@ -1187,6 +1308,85 @@ class ParallelEngramEmbedding(nn.Module):
             PACKED=out.dtype == torch.uint8,
             OUT_STRIDE=out.stride(0),
         )
+
+    def init_disk_staging(self, max_rows: int) -> None:
+        """Allocate address-stable pinned buffers for disk-backed lookups."""
+        if not self.disk_offload:
+            return
+        scale_dim = self.dim // self.block_size
+        self._disk_ids = torch.empty(
+            max_rows, dtype=torch.int64, device="cpu", pin_memory=True
+        )
+        self._disk_w = torch.empty(
+            max_rows, self.dim, dtype=torch.uint8, device="cpu", pin_memory=True
+        )
+        self._disk_s = torch.empty(
+            max_rows, scale_dim, dtype=torch.uint8, device="cpu", pin_memory=True
+        )
+        self._disk_rows = torch.arange(max_rows, dtype=torch.int64)
+        self._disk_dst = torch.arange(max_rows, dtype=torch.int32)
+        self._disk_done = torch.cuda.Event()
+
+    def _disk_lookup(
+        self, indices: torch.Tensor, out: torch.Tensor, background: bool
+    ) -> None:
+        rows = indices.shape[0] * self.part_n_hash_cols
+        if not rows:
+            return
+        assert self._disk is not None
+        assert rows <= self._disk_ids.shape[0], "engram disk staging too small"
+        stream = torch.cuda.current_stream()
+        capturing = torch.cuda.is_current_stream_capturing()
+        if self._disk_recorded and not capturing:
+            stream.wait_event(self._disk_done)
+        head_end = self.head_start + self.part_n_hash_cols
+        local = indices[:, self.head_start : head_end].to(torch.int64)
+        local = local - self.vocab_start_idx
+        if (pad := self.part_n_hash_cols - local.shape[1]) > 0:
+            local = nn.functional.pad(local, (0, pad), value=-1)
+        self._disk_ids[:rows].copy_(local.reshape(-1), non_blocking=True)
+        self._disk.enqueue_read(
+            stream.cuda_stream,
+            self._disk_ids.data_ptr(),
+            self._disk_w.data_ptr(),
+            self._disk_s.data_ptr(),
+            rows,
+        )
+        if self._disk_views is None:
+            self._disk_views = (
+                get_accelerator_view_from_cpu_tensor(
+                    self._disk_w.view(torch.float8_e4m3fn)
+                ),
+                get_accelerator_view_from_cpu_tensor(self._disk_s),
+            )
+        weight, scales = self._disk_views
+        tiles = triton.cdiv(rows, 16)
+        grid = min(tiles, self._num_sms // 2 if background else self._num_sms)
+        _engram_lookup_kernel[(grid,)](
+            weight,
+            scales,
+            self._disk_rows,
+            self._disk_dst,
+            out,
+            0,
+            rows,
+            rows,
+            1,
+            1,
+            HEAD_START=self.head_start,
+            LOCAL_HEADS=self.part_n_hash_cols,
+            TOTAL_HEADS=self.n_hash_cols,
+            DIM=self.dim,
+            QUANT_BLOCK=self.block_size,
+            BLOCK_R=16,
+            GRID=grid,
+            SORTED=True,
+            PACKED=False,
+            OUT_STRIDE=out.stride(0),
+        )
+        if not capturing:
+            self._disk_done.record(stream)
+            self._disk_recorded = True
 
     def forward(self, indices: torch.Tensor) -> torch.Tensor:
         """indices: [num_tokens, n_hash_cols] -> [num_tokens, n_hash_cols, dim]
@@ -1605,6 +1805,11 @@ class Engram(nn.Module):
         engram_config = get_current_vllm_config().engram_config
         assert engram_config is not None
         tensor_prefix = prefix.removeprefix("model.") + ".embed"
+        disk_source = None
+        if engram_config.disk_offload:
+            disk_source = _resolve_engram_disk_source(
+                layout.layer_ids[layer_hash_index]
+            )
         return ParallelEngramEmbedding(
             layout.num_embeddings[layer_hash_index],
             layout.head_dim,
@@ -1614,6 +1819,9 @@ class Engram(nn.Module):
             use_thp=engram_config.use_thp,
             file_table_dir=(engram_config.table_dir if engram_config.file_backed else None),
             file_tensor_prefix=(tensor_prefix if engram_config.file_backed else None),
+            disk_source=disk_source,
+            disk_threads=engram_config.disk_threads,
+            disk_cache_rows=engram_config.disk_cache_rows,
         )
 
     def _init_staging(self, max_tokens: int, head_dim: int) -> None:
@@ -1623,6 +1831,9 @@ class Engram(nn.Module):
             self.embed_tokens.part_n_hash_cols,
             head_dim,
             dtype=torch.bfloat16,
+        )
+        self.embed_tokens.init_disk_staging(
+            max_tokens * self.embed_tokens.dp_size * self.embed_tokens.part_n_hash_cols
         )
         if not self.embed_tokens.cpu_offload:
             self._prefetch_stream = None

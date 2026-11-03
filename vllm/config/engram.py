@@ -64,8 +64,19 @@ class EngramConfig:
     table_dir: str | None = None
     """Local directory containing the native Engram safetensors and index."""
 
+    disk_offload: bool = False
+    """Read table rows from this checkpoint's safetensors shards on demand."""
+
+    disk_threads: int = 32
+    """Reader threads per Engram layer for disk_offload."""
+
+    disk_cache_rows: int = 0
+    """Rows per Engram layer retained in the disk reader's hot-row cache."""
+
     @model_validator(mode="after")
     def _validate_shared_memory(self) -> Self:
+        if self.file_backed and self.disk_offload:
+            raise ValueError("file_backed and disk_offload are mutually exclusive")
         if self.file_backed:
             if not self.cpu_offload:
                 raise ValueError("file_backed Engram requires cpu_offload=True")
@@ -82,6 +93,18 @@ class EngramConfig:
             raise ValueError(
                 "use_thp requires cpu_offload=True and dp_shared_memory=False"
             )
+        if self.disk_offload and (
+            not self.cpu_offload
+            or self.dp_shared_memory
+            or self.use_thp
+            or self.embedding_across_dp
+        ):
+            raise ValueError(
+                "disk_offload requires cpu_offload=True, dp_shared_memory=False, "
+                "use_thp=False and embedding_across_dp=False"
+            )
+        if self.disk_threads < 1 or self.disk_cache_rows < 0:
+            raise ValueError("disk_threads must be >= 1 and disk_cache_rows >= 0")
         return self
 
     def verify_model_config(self, model_config: "ModelConfig | None") -> None:
@@ -109,6 +132,7 @@ class EngramConfig:
             self.dp_shared_memory = (
                 self.cpu_offload
                 and not self.use_thp
+                and not self.disk_offload
                 and parallel_config.data_parallel_size > 1
                 and not parallel_config.enable_elastic_ep
             )
