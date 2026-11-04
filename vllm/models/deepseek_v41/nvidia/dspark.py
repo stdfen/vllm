@@ -10,6 +10,7 @@ To implement non-causal attention, we leverage the sparse attention implementati
 include the future query tokens in the top-k indices for each query token.
 """
 
+import os
 from collections.abc import Iterable
 
 import regex as re
@@ -22,6 +23,7 @@ from vllm.config.kernel import NATIVE_MEGA_MOE_BACKENDS
 from vllm.distributed import (
     get_tensor_model_parallel_rank,
     get_tensor_model_parallel_world_size,
+    tensor_model_parallel_all_gather,
 )
 from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.logger import init_logger
@@ -33,10 +35,15 @@ from vllm.model_executor.layers.fused_moe import (
     fused_moe_make_expert_params_mapping,
 )
 from vllm.model_executor.layers.layernorm import RMSNorm
-from vllm.model_executor.layers.linear import ReplicatedLinear
+from vllm.model_executor.layers.linear import (
+    ReplicatedLinear,
+    RowParallelLinear,
+    UnquantizedLinearMethod,
+)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead,
+    UnquantizedEmbeddingMethod,
     VocabParallelEmbedding,
 )
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
@@ -64,9 +71,59 @@ from .model import (
 
 logger = init_logger(__name__)
 
+
+def draft_logit_features(logits: torch.Tensor, gather, tp: int) -> torch.Tensor:
+    """[rows, 2] fp32 (top-1 - top-2 logit margin, top-1 probability) over the whole
+    vocabulary from this rank's shard of the draft logits; `gather` all-gathers a
+    [rows, 3] tensor across the tp ranks along the last dim (rank order)."""
+    lf = logits.float()
+    local = torch.cat(
+        [lf.topk(2, dim=-1).values, torch.logsumexp(lf, -1, keepdim=True)], -1
+    )
+    g = gather(local).view(-1, tp, 3)
+    top = g[:, :, :2].reshape(g.shape[0], -1).topk(2, dim=-1).values
+    lse = torch.logsumexp(g[:, :, 2], dim=-1)
+    return torch.stack([top[:, 0] - top[:, 1], torch.exp(top[:, 0] - lse)], dim=-1)
+
+
+def draft_features_from_records(rec: torch.Tensor) -> torch.Tensor:
+    """[..., tp, 4] gathered (max, index, second, logsumexp) records, one per rank's
+    vocabulary shard (MarkovBiasCache.argmax_record) -> [..., 2] fp32 (top-1 - top-2
+    logit margin, top-1 probability) over the whole vocabulary: draft_logit_features
+    from the records instead of the logits."""
+    top = torch.cat([rec[..., 0], rec[..., 2]], dim=-1).topk(2, dim=-1).values
+    lse = torch.logsumexp(rec[..., 3], dim=-1)
+    return torch.stack([top[..., 0] - top[..., 1], torch.exp(top[..., 0] - lse)], dim=-1)
+
+
+# VLLM_DSPARK_MARKOV_FUSED=1: the local draft argmax's Markov bias, add and max in
+# two launches (ops/markov_cache.py argmax_pair), the same drafts bit for bit.
+_MARKOV_FUSED = os.environ.get("VLLM_DSPARK_MARKOV_FUSED", "0") == "1"
+# VLLM_DSPARK_CONTEXT_KV_GROUPED=1: the context KV's wkv for every draft layer in one
+# EXL3 launch (vllm_exl3_moe.dense.context_kv_group) instead of each layer's whole
+# fused wq_a|wkv with the wq_a columns dropped.
+_CONTEXT_KV_GROUPED = os.environ.get("VLLM_DSPARK_CONTEXT_KV_GROUPED", "0") == "1"
+
+
+def _context_kv_group(layers) -> tuple | None:
+    """(run, widths) over the draft layers' fused wq_a|wkv modules, or None (the plugin
+    is missing, or its modules are not EXL3 with flat parts)."""
+    try:
+        from vllm_exl3_moe.dense import context_kv_group
+    except ImportError:
+        return None
+    return context_kv_group([layer.attn.fused_wqa_wkv for layer in layers], part=1)
+
 # MoE expert scale suffix differs by expert dtype (mirrors deepseek_v4 loaders):
 # fp4 experts register ``.weight_scale``; block-fp8 experts ``.weight_scale_inv``.
 _EXPERT_SCALE_RE = re.compile(r"\.experts\.\d+\.w[123]\.scale$")
+
+# The drafter's own lm_head (VLLM_DSPARK_OWN_HEAD=1): checkpoint pieces
+# mtp.head.{trellis,suh,svh,mul1|mcg}, the target head's head.* convention (patch 0007)
+# under mtp., loaded into lm_head. The head is built under OWN_HEAD_PREFIX, the name a
+# quantization config keys its method on (vllm_exl3_moe: exl3_moe.drafter_head_k).
+_OWN_HEAD_PIECES_RE = re.compile(r"^mtp\.head\.(trellis|suh|svh|mul1|mcg)$")
+OWN_HEAD_PREFIX = "mtp_head"
 
 
 class DSparkDeepseekV4Model(nn.Module):
@@ -99,14 +156,51 @@ class DSparkDeepseekV4Model(nn.Module):
             prefix=maybe_prefix(prefix, "embed_tokens"),
         )
 
-        self.main_proj = ReplicatedLinear(
-            config.hidden_size * len(self.target_layer_ids),
-            config.hidden_size,
-            bias=False,
-            return_bias=False,
-            quant_config=vllm_config.quant_config,
-            prefix=maybe_prefix(prefix, "main_proj"),
+        # VLLM_DSPARK_MAIN_PROJ_ROWPAR=1: main_proj row-parallel over the concatenated
+        # target taps. Each rank multiplies its share of the taps by the matching input
+        # rows (half the weight bytes a rank at TP=2) and one all-reduce sums the
+        # partials; replicated otherwise. The split must keep whole 32-column blocks
+        # (the MXFP8 [32, 32] scales) and needs TP > 1 without sequence parallelism.
+        main_in = config.hidden_size * len(self.target_layer_ids)
+        tp_size = get_tensor_model_parallel_world_size()
+        want_rowpar = os.environ.get("VLLM_DSPARK_MAIN_PROJ_ROWPAR", "0") == "1"
+        self.main_proj_rowpar = (
+            want_rowpar
+            and tp_size > 1
+            and not self.use_sequence_parallel
+            and main_in % (32 * tp_size) == 0
         )
+        if want_rowpar and not self.main_proj_rowpar:
+            logger.warning(
+                "VLLM_DSPARK_MAIN_PROJ_ROWPAR=1 needs TP > 1 without sequence "
+                "parallelism and a 32-column-block input split; main_proj stays "
+                "replicated"
+            )
+        if self.main_proj_rowpar:
+            self.main_proj = RowParallelLinear(
+                main_in,
+                config.hidden_size,
+                bias=False,
+                input_is_parallel=False,
+                reduce_results=True,
+                return_bias=False,
+                quant_config=vllm_config.quant_config,
+                prefix=maybe_prefix(prefix, "main_proj"),
+            )
+            logger.info(
+                "DSpark main_proj row-parallel over %d ranks "
+                "(VLLM_DSPARK_MAIN_PROJ_ROWPAR=1)",
+                tp_size,
+            )
+        else:
+            self.main_proj = ReplicatedLinear(
+                main_in,
+                config.hidden_size,
+                bias=False,
+                return_bias=False,
+                quant_config=vllm_config.quant_config,
+                prefix=maybe_prefix(prefix, "main_proj"),
+            )
         self.main_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         self.topk_indices_buffer = torch.empty(
@@ -184,15 +278,26 @@ class DSparkDeepseekV4Model(nn.Module):
         place draft layers in different groups). ``None`` (or a ``None`` entry)
         runs the projection to reserve workspace but writes nothing (profiling).
         """
+        grouped = (
+            _context_kv_group(self.layers)
+            if _CONTEXT_KV_GROUPED and 0 < main_x.shape[0] <= 16
+            else None
+        )
+        kv_all = grouped[0](main_x) if grouped is not None else None
         for i, layer in enumerate(self.layers):
             slot_mapping = (
                 None if context_slot_mappings is None else context_slot_mappings[i]
             )
             attn = layer.attn
-            # Optimized DSV4 MLA path: wkv part of the fused wq_a|wkv projection
-            # (q_lora part discarded), then RoPE/quant/insert via the fused op.
-            qr_kv, _ = attn.fused_wqa_wkv(main_x)
-            kv = qr_kv[..., attn.q_lora_rank :]
+            if kv_all is not None:
+                # this layer's wkv columns of the one launch over every layer's wkv
+                lo = sum(grouped[1][:i])
+                kv = kv_all[:, lo : lo + grouped[1][i]]
+            else:
+                # Optimized DSV4 MLA path: wkv part of the fused wq_a|wkv projection
+                # (q_lora part discarded), then RoPE/quant/insert via the fused op.
+                qr_kv, _ = attn.fused_wqa_wkv(main_x)
+                kv = qr_kv[..., attn.q_lora_rank :]
             kv = attn.kv_norm(kv)
             if slot_mapping is None:
                 continue
@@ -279,9 +384,14 @@ def _insert_context_kv(
 
 class DSparkDeepseekV4ForCausalLM(nn.Module):
     # Draft weights ship in the target checkpoint (mtp.*) without embed/head, so
-    # load_dspark_model always aliases the target's.
+    # load_dspark_model aliases the target's. The exception is opt-in: with
+    # VLLM_DSPARK_OWN_HEAD=1 on a checkpoint that carries the drafter's own head
+    # (mtp.head.*), __init__ builds it and sets keeps_own_lm_head, and load_dspark_model
+    # keeps it. has_own_lm_head stays False: it asks for _should_share's weight
+    # comparison, and a quantized head (EXL3: trellis pieces) has no .weight to compare.
     has_own_embed_tokens = False
     has_own_lm_head = False
+    keeps_own_lm_head = False
     # Full-vocab draft: draft ids are target ids, no remapping needed.
     draft_id_to_target_id = None
 
@@ -300,13 +410,57 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
         self.model = DSparkDeepseekV4Model(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
         )
-        # Shared with the target (aliased by the speculator's load utility).
-        self.lm_head = ParallelLMHead(
+        # The drafter's own head (VLLM_DSPARK_OWN_HEAD=1), if the checkpoint has one.
+        self.lm_head = self._own_lm_head(prefix)
+        if self.lm_head is None:
+            # Shared with the target (aliased by the speculator's load utility).
+            self.lm_head = ParallelLMHead(
+                self.config.vocab_size,
+                self.config.hidden_size,
+                prefix=maybe_prefix(prefix, "lm_head"),
+            )
+        self.logits_processor = LogitsProcessor(self.config.vocab_size)
+        # Cached Markov bias rows (ops/markov_cache.py), built after loading when
+        # VLLM_DSPARK_MARKOV_CACHE names a token list.
+        self._markov_cache = None
+        # VLLM_DSPARK_LOCAL_ARGMAX=1: greedy drafts argmax each rank's vocabulary shard of
+        # (base logits + Markov bias) and all-gather only (value, index) per row, instead of
+        # all-gathering the full draft logits and adding a full-vocab bias on every rank.
+        self._markov_cache_local = None
+
+    def _own_lm_head(self, prefix: str) -> ParallelLMHead | None:
+        """VLLM_DSPARK_OWN_HEAD=1: the drafter's own lm_head, from the checkpoint's
+        mtp.head.* pieces (another quantization of the target's [hidden -> vocab]
+        matrix, e.g. EXL3 K4 under a K6 target head: the drafter only proposes, the
+        target verifies), when the quant config gives OWN_HEAD_PREFIX a method. None
+        otherwise, which keeps the shared head. Built like the placeholder it replaces
+        (same vocab, padding and TP group), so its vocabulary shard is the target
+        head's: _vocab_shard, the local draft argmax and the Markov cache read the
+        same columns."""
+        if os.environ.get("VLLM_DSPARK_OWN_HEAD") != "1":
+            return None
+        head = ParallelLMHead(
             self.config.vocab_size,
             self.config.hidden_size,
-            prefix=maybe_prefix(prefix, "lm_head"),
+            quant_config=self.quant_config,
+            prefix=maybe_prefix(prefix, OWN_HEAD_PREFIX),
         )
-        self.logits_processor = LogitsProcessor(self.config.vocab_size)
+        unquantized = (UnquantizedEmbeddingMethod, UnquantizedLinearMethod)
+        if type(head.quant_method) in unquantized:
+            # no method: the checkpoint declares no drafter head
+            logger.warning(
+                "VLLM_DSPARK_OWN_HEAD=1, but the quant config has no method for %s "
+                "(no drafter head in this checkpoint): the drafter shares the "
+                "target's lm_head",
+                head.prefix,
+            )
+            return None
+        self.keeps_own_lm_head = True
+        logger.info(
+            "DSpark drafter: its own lm_head (%s, mtp.head.*), not the target's",
+            type(head.quant_method).__name__,
+        )
+        return head
 
     # --- Hooks used by the speculator -------------------------------------
 
@@ -357,6 +511,119 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
     def markov_bias(self, markov_embed: torch.Tensor) -> torch.Tensor:
         return self.model.markov_head.bias(markov_embed, self.logits_processor)
 
+    def markov_bias_for_ids(
+        self, token_ids: torch.Tensor, markov_embed: torch.Tensor
+    ) -> torch.Tensor:
+        if self._markov_cache is None:
+            return self.markov_bias(markov_embed)
+        return self._markov_cache(token_ids, markov_embed)
+
+    def _maybe_build_markov_cache(self) -> None:
+        if not os.environ.get("VLLM_DSPARK_MARKOV_CACHE"):
+            return
+        from .ops.markov_cache import MarkovBiasCache
+
+        head = self.model.markov_head
+        w1, w2 = head.markov_w1.weight, head.markov_w2.weight
+        if w2.dim() != 2 or w2.dtype not in (torch.bfloat16, torch.float16):
+            logger.warning("DSpark Markov cache off: markov_w2 is %s", w2.dtype)
+            return
+        probe = torch.tensor([0, 1, 2, 3], dtype=torch.int64, device=w2.device)
+        ref = self.markov_bias(self.markov_embed(probe))
+        if ref.shape != (probe.numel(), w2.shape[0]):
+            logger.warning("DSpark Markov cache off: bias shape %s", tuple(ref.shape))
+            return
+        shard = self._vocab_shard()
+        if os.environ.get("VLLM_DSPARK_LOCAL_ARGMAX") == "1" and shard is not None:
+            lo, hi = shard
+            cache = MarkovBiasCache(w1, w2[lo:hi], ref.dtype)
+            got = cache(probe, self.markov_embed(probe))
+            ref = ref[:, lo:hi]
+            err = (got.float() - ref.float()).abs().max() / ref.float().abs().max()
+            logger.info(
+                "DSpark Markov cache, vocab columns %d-%d (local draft argmax): "
+                "max rel diff vs the GEMM path %.2e", lo, hi, err
+            )
+            self._markov_cache_local = cache
+            return
+        cache = MarkovBiasCache(w1, w2, ref.dtype)
+        got = cache(probe, self.markov_embed(probe))
+        err = (got.float() - ref.float()).abs().max() / ref.float().abs().max()
+        logger.info("DSpark Markov cache: max rel diff vs the GEMM path %.2e", err)
+        self._markov_cache = cache
+
+    def _vocab_shard(self) -> tuple[int, int] | None:
+        if getattr(self.lm_head, "tp_size", 1) <= 1:
+            return None
+        si = self.lm_head.shard_indices
+        return si.org_vocab_start_index, si.org_vocab_end_index
+
+    def supports_local_argmax(self) -> bool:
+        return self._markov_cache_local is not None
+
+    def draft_features(self, rec: torch.Tensor) -> torch.Tensor:
+        return draft_features_from_records(rec)
+
+    def supports_feature_records(self) -> bool:
+        return _MARKOV_FUSED and self._markov_cache_local is not None
+
+    def compute_draft_logits_local(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        return self.logits_processor(
+            self.lm_head, self.model.norm(hidden_states), skip_gather=True
+        )
+
+    def draft_argmax_local(
+        self,
+        base_local: torch.Tensor,
+        token_ids: torch.Tensor,
+        markov_embed: torch.Tensor,
+        feat_out: torch.Tensor | None = None,
+        rec_out: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        assert self._markov_cache_local is not None
+        shard = self._vocab_shard()
+        assert shard is not None
+        lo, hi = shard
+        if feat_out is not None:
+            bias = self._markov_cache_local(token_ids, markov_embed)
+            logits = base_local[:, : hi - lo] + bias
+            vals, idx = logits.max(dim=-1)
+            pair = torch.stack([vals.float(), (idx + lo).float()], dim=-1)
+            feat_out.copy_(draft_logit_features(
+                logits,
+                lambda t: tensor_model_parallel_all_gather(t, dim=-1),
+                self.lm_head.tp_size,
+            ))
+        elif rec_out is not None and base_local.stride(-1) == 1:
+            pair = self._markov_cache_local.argmax_record(
+                token_ids, markov_embed, base_local, hi - lo, lo
+            )
+        elif rec_out is not None:
+            bias = self._markov_cache_local(token_ids, markov_embed)
+            lf = (base_local[:, : hi - lo] + bias).float()
+            vals, idx = lf.max(dim=-1)
+            pair = torch.stack([
+                vals, (idx + lo).float(), lf.topk(2, dim=-1).values[:, 1],
+                torch.logsumexp(lf, dim=-1),
+            ], dim=-1)
+        elif _MARKOV_FUSED and base_local.stride(-1) == 1:
+            pair = self._markov_cache_local.argmax_pair(
+                token_ids, markov_embed, base_local, hi - lo, lo
+            )
+        else:
+            bias = self._markov_cache_local(token_ids, markov_embed)
+            logits = base_local[:, : hi - lo] + bias
+            vals, idx = logits.max(dim=-1)
+            pair = torch.stack([vals.float(), (idx + lo).float()], dim=-1)
+        tp = self.lm_head.tp_size
+        gathered = tensor_model_parallel_all_gather(pair, dim=-1).view(
+            -1, tp, pair.shape[-1]
+        )
+        if rec_out is not None:
+            rec_out.copy_(gathered)
+        best = gathered[:, :, 0].argmax(dim=-1, keepdim=True)
+        return gathered[:, :, 1].gather(dim=-1, index=best).squeeze(-1).to(torch.int64)
+
     def compute_confidence(
         self, head_hidden: torch.Tensor, markov_embed: torch.Tensor
     ) -> torch.Tensor:
@@ -370,7 +637,8 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
         """Load the ``mtp.{0,1,2}.*`` draft weights from the target checkpoint.
 
         Non-mtp weights (embed/head/main layers) belong to the target model and
-        are skipped here. ``embed_tokens``/``lm_head`` are aliased from the target.
+        are skipped here. ``embed_tokens``/``lm_head`` are aliased from the target,
+        except a drafter head of its own (``keeps_own_lm_head``: ``mtp.head.*``).
         """
         first_layer = self.model.layers[0]
         use_native_mega_moe = first_layer.ffn.use_native_mega_moe
@@ -427,13 +695,26 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
             )
             if grouped_match:
                 slice_id = int(grouped_match.group(1))
-                mapped_group = (
+                canonical_group = (
                     name[: grouped_match.start()] + "." + grouped_match.group(2)
                 )
-                param = params_dict[mapped_group]
-                loaded = param.weight_loader(param, loaded_weight, slice_id)
+                mapped_group = canonical_group
+                # EXL3 wo_a may expose real ``slice.<id>`` submodules (the
+                # current plugin) or a legacy flat parameter whose loader
+                # consumes the slice id.  Accept both checkpoint contracts.
+                if name in params_dict:
+                    mapped_group = name
+                    param = params_dict[mapped_group]
+                    loaded = param.weight_loader(param, loaded_weight)
+                else:
+                    param = params_dict[mapped_group]
+                    loaded = param.weight_loader(param, loaded_weight, slice_id)
                 if loaded is not False:
                     loaded_params.add(mapped_group)
+                    # The own-head completeness check uses the canonical flat
+                    # parameter names even when the current EXL3 plugin exposes
+                    # physical ``slice.<id>`` parameters.
+                    loaded_params.add(canonical_group)
                 continue
 
             # ``.scale`` -> per-method scale suffix.
@@ -512,7 +793,20 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
 
         if self.model.confidence_head is not None and not loaded_confidence_head:
             self.model.confidence_head = None
+        if self.keeps_own_lm_head:
+            # the quant config declared the drafter's head, so its tensors must all be
+            # here: drafting from an unloaded head would only cost acceptance, silently
+            missing = {
+                f"lm_head.{n}" for n, _ in self.lm_head.named_parameters()
+            } - loaded_params
+            if missing:
+                raise ValueError(
+                    "VLLM_DSPARK_OWN_HEAD=1: the drafter's own lm_head has a quant "
+                    "method but the checkpoint has no mtp.head.* tensors for "
+                    f"{sorted(missing)}"
+                )
         self.process_weights_after_loading()
+        self._maybe_build_markov_cache()
         logger.info_once("DSpark draft model loaded: %d params", len(loaded_params))
         return loaded_params
 
@@ -524,10 +818,13 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
         self._finalize_moe()
 
     def _remap_dspark_name(self, name: str) -> str | None:
-        """Map a checkpoint ``mtp.{i}.*`` name to this model's parameter path.
+        """Map a checkpoint draft name to this model's parameter path.
 
         Returns None for non-mtp weights (owned by the target model).
         """
+        own = _OWN_HEAD_PIECES_RE.match(name)
+        if own is not None:
+            return f"lm_head.{own.group(1)}" if self.keeps_own_lm_head else None
         m = re.match(r"mtp\.(\d+)\.(.*)", name)
         if m is None:
             return None

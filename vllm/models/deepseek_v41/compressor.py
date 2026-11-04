@@ -225,7 +225,11 @@ class DeepseekCompressor(nn.Module):
             wkv_wgate_sizes,
             bias=False,
             return_bias=False,
-            quant_config=vllm_config.quant_config,
+            # The released EXL3 checkpoint keeps compressor wkv/wgate in
+            # native BF16 (there are no EXL3/FP8 scale pieces for them).
+            # Applying the model-wide FP8 config packs ``weight`` into a
+            # Marlin layout that this direct fp32 projection cannot consume.
+            quant_config=None,
             disable_tp=True,
             prefix=f"{prefix}.fused_wkv_wgate",
         )

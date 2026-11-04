@@ -1288,13 +1288,23 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
             if grouped_match:
                 slice_id = int(grouped_match.group(1))
                 mapped = name[: grouped_match.start()] + "." + grouped_match.group(2)
-                if mapped not in params_dict:
+                # Current EXL3 dense methods register one Module per wo_a
+                # group (``slice.<id>.<piece>``).  Older methods exposed a
+                # single piece parameter whose loader accepted ``slice_id``.
+                # Prefer the exact grouped parameter while retaining support
+                # for the older flat representation.
+                exact = name
+                if exact in params_dict:
+                    mapped = exact
+                    param = params_dict[mapped]
+                    loaded = param.weight_loader(param, loaded_weight)
+                else:
                     head, _, leaf = mapped.rpartition(".")
                     suffixed = f"{head}.base_layer.{leaf}"
                     if suffixed in params_dict:
                         mapped = suffixed
-                param = params_dict[mapped]
-                loaded = param.weight_loader(param, loaded_weight, slice_id)
+                    param = params_dict[mapped]
+                    loaded = param.weight_loader(param, loaded_weight, slice_id)
                 if loaded is not False:
                     loaded_params.add(mapped)
                 continue
@@ -1415,6 +1425,11 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
             1 if name.endswith(("weight_scale_inv", "weight_scale")) else block_size[0]
         )
         dim = 1 if ".down_proj." in name else 0
+        if loaded_weight.dim() <= dim:
+            # Quantization plugins may store sign vectors and scalar codebook
+            # markers next to the two-dimensional shared-expert weights.  They
+            # have no intermediate axis and therefore require no TP padding.
+            return loaded_weight
         mult = get_tensor_model_parallel_world_size() * step
         pad = cdiv(loaded_weight.shape[dim], mult) * mult - loaded_weight.shape[dim]
         if pad == 0:

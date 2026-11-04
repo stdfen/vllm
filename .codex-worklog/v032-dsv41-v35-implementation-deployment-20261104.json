@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "taskId": "v032-dsv41-v35-implementation-deployment-20261104",
+  "taskKey": "vllm|deepseek-v41-v032-author-port|implementation-deployment-benchmark",
+  "project": "vllm",
+  "businessGoal": "将 sudoingX DeepSeek V4.1 优化移植到 vLLM 0.32 并在双 DGX Spark 部署验证",
+  "deliverableType": "code-and-runtime-validation",
+  "themeKey": "deepseek-v41-dgx-spark",
+  "updatedAt": "2026-11-04T01:10:00+08:00",
+  "status": "blocked",
+  "verificationLevel": "runtime_verified",
+  "completed": [
+    "在作者精确基线 6e517b15 上无冲突重放 36 个补丁并提取最终实现",
+    "移植 Markov cache、本地 argmax、融合 argmax、拟合置信度、row-parallel main_proj、context KV grouping 和 RowMM",
+    "在 8.96 与 8.164 构建并部署不可变镜像 vllm/vllm-openai:v0.32.0-dsv41-v35",
+    "通过 API、双机 TP2、作者 greedy repeat 5/5 一致性及 set-b 9-rep 基准"
+  ],
+  "decisions": [
+    "保留 --block-size 64，v0.32 的 128 block 与当前 DeepGEMM indexer 路径不兼容",
+    "最终保留 conf+feat 与自动 Breakable CUDA Graph；固定深度和禁用 Breakable 的 A/B 均无整体收益",
+    "不宣称达到作者性能，最终 9-rep 仅为作者基准的 92.9%-95.5%"
+  ],
+  "changedFiles": [
+    "vllm/models/deepseek_v41/nvidia/dspark.py",
+    "vllm/models/deepseek_v41/nvidia/ops/markov_cache.py",
+    "vllm/v1/worker/gpu/spec_decode/dspark/speculator.py",
+    "vllm/v1/worker/gpu/spec_decode/depth_policy.py",
+    "vllm/models/deepseek_v41/attention.py",
+    "docker/exl3/Dockerfile.v24-hotfix"
+  ],
+  "testResults": [
+    "py_compile and git diff --check passed",
+    "greedy_repeat_check.py: n=5, 384 tokens, identical=true",
+    "kit_bench set-b 9 reps: code 99.055, prose 53.702, structured 134.356 tok/s; all identical",
+    "fixed depth 3/4/5 and VLLM_USE_BREAKABLE_CUDAGRAPH=0 were benchmarked and rejected"
+  ],
+  "blockers": [
+    "Performance gate not met: author baseline is 103.7 / 57.8 / 144.4 tok/s",
+    "v0.32 rounds remain approximately 2.4-3.3 ms slower at equivalent tokens per verify round"
+  ],
+  "nextSteps": [
+    "Capture side-by-side CUDA traces for v0.32 v35 and author v5 on the same prompt",
+    "Attribute the residual round latency to graph boundaries, scheduler work, or drafter kernels before further edits"
+  ],
+  "efficiencyMetrics": {"manualBaselineMinutes": null, "aiElapsedMinutes": null, "reworkMinutes": null, "source": null},
+  "evidence": [
+    {"type": "runtime-image", "reference": "8.96+8.164:vllm/vllm-openai:v0.32.0-dsv41-v35"},
+    {"type": "benchmark", "reference": "/home/intellif/dsv41_recipe/artifacts/v032-v35/decode-set-b-r9-final.json"},
+    {"type": "source", "reference": "docs/deployment/deepseek_v41_1017_exl3_gb10_tp2_v032_execution_report_20261103.md"}
+  ]
+}

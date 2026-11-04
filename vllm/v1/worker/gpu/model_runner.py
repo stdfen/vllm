@@ -159,6 +159,10 @@ from vllm.v1.worker.gpu.spec_decode.adaptive_verification import (
     maybe_create_adaptive_verification_manager,
     resolve_adaptive_cudagraph_mode,
 )
+from vllm.v1.worker.gpu.spec_decode.depth_policy import (
+    DSparkDepthPolicy,
+    depth_policy_requested,
+)
 from vllm.v1.worker.gpu.spec_decode.eagle.eagle3_utils import (
     set_eagle3_aux_hidden_state_layers,
     verify_supports_aux_hidden_states_over_pp,
@@ -321,6 +325,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         self.step_timing = StepTimingCollector()
         self.adaptive_verification: AdaptiveVerificationManager | None = None
+        self.depth_policy: DSparkDepthPolicy | None = None
         self.input_buffers = InputBuffers(
             max_num_reqs=self.max_num_reqs,
             max_num_tokens=self.max_num_tokens,
@@ -706,6 +711,24 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             target_layer_names=target_attn_layer_names,
             additional_attn_cg_support=additional_attn_cg_support,
         )
+        if self.speculator is not None and depth_policy_requested():
+            if self.adaptive_verification is not None:
+                logger.warning(
+                    "VLLM_DSPARK_DEPTH_POLICY ignored: adaptive verification is on."
+                )
+            elif getattr(self, "batch_sharder", None) is not None:
+                logger.warning(
+                    "VLLM_DSPARK_DEPTH_POLICY ignored with batch-sharded sampling."
+                )
+            else:
+                self.depth_policy = DSparkDepthPolicy(
+                    self.num_speculative_steps,
+                    self.max_num_reqs,
+                    self.device,
+                    has_confidence=getattr(
+                        self.speculator, "use_confidence_head", False
+                    ),
+                )
 
         self.block_tables = BlockTables(
             block_sizes=block_sizes,
@@ -1217,6 +1240,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             req_index = self.req_states.req_id_to_index[req_id]
             if self.adaptive_verification is not None:
                 self.adaptive_verification.add_request(req_index)
+            if self.depth_policy is not None:
+                self.depth_policy.reset(req_index)
 
             if self.pooling_runner is not None:
                 assert new_req_data.pooling_params is not None
@@ -1499,6 +1524,20 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.model_state.num_new_sampled_tokens_per_step,
         )
 
+        # Per-round DSpark depth: rows past a request's depth take no routed
+        # experts (the router reads is_padding: top-k ids -1) and their drafts
+        # are rejected in sample().
+        depth_dead_rows = None
+        if (
+            self.depth_policy is not None
+            and num_draft_tokens_per_req is not None
+            and total_num_draft_tokens > 0
+        ):
+            depth_dead_rows = self.depth_policy.dead_rows(
+                expanded_idx_mapping, expanded_local_pos
+            )
+            is_padding[logits_indices.long()] = depth_dead_rows
+
         fast_prefill = None
         if self.fast_prefill is not None:
             fast_prefill = self.fast_prefill.prepare(
@@ -1566,6 +1605,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 else None
             ),
         )
+        input_batch.depth_dead_rows = depth_dead_rows
         if self.pcp_manager is not None:
             input_batch = self.pcp_manager.partition_batch(input_batch, batch_desc)
         return input_batch
@@ -1656,6 +1696,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 grammar_output.num_acceptable_drafts,
             )
 
+        if self.depth_policy is not None and input_batch.num_draft_tokens > 0:
+            # Rows past the depth ran without routed experts: never accept them.
+            dead = getattr(input_batch, "depth_dead_rows", None)
+            if dead is None or dead.shape[0] != logits.shape[0]:
+                raise RuntimeError("DSpark depth policy: no depth mask for this batch")
+            invalid_drafts = dead if invalid_drafts is None else invalid_drafts | dead
+
         sampler_output: SamplerOutput | None
         if input_batch.num_reqs == 0:
             # This rank owns no requests this step. It contributes an
@@ -1707,7 +1754,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         counts without all-gathering the logits."""
         assert self.greedy_argmax is not None
         invalid_drafts = None
-        if self.depth_policy is not None and input_batch.num_draft_tokens > 0:
+        depth_policy = getattr(self, "depth_policy", None)
+        if depth_policy is not None and input_batch.num_draft_tokens > 0:
             # Rows past the depth ran without routed experts: never accept them.
             dead = getattr(input_batch, "depth_dead_rows", None)
             if dead is None or dead.shape[0] != input_batch.logits_indices.shape[0]:
@@ -2179,6 +2227,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         sampler_output, num_sampled, num_rejected = self.sample(
             hidden_states, input_batch, grammar_output
         )
+        if self.depth_policy is not None and input_batch.num_draft_tokens > 0:
+            self.depth_policy.observe(
+                input_batch.idx_mapping,
+                num_sampled,
+                input_batch.num_draft_tokens_per_req,
+                input_batch.num_reqs,
+                req_ids=input_batch.req_ids,
+            )
 
         if self.pp_handler is not None:
             # Broadcast to non-last PP ranks (handles spec decode multi-token).
@@ -2300,6 +2356,19 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             if self.adaptive_verification is not None:
                 self.adaptive_verification.record_confidences(
                     self.speculator.draft_token_confidence_probs, input_batch
+                )
+            if self.depth_policy is not None:
+                self.depth_policy.record(
+                    self.speculator.draft_token_confidence_probs,
+                    input_batch.idx_mapping,
+                    input_batch.num_reqs,
+                    feats=getattr(self.speculator, "draft_feats", None)
+                    if getattr(self.speculator, "_log_feats", False)
+                    else None,
+                    hidden=getattr(self.speculator, "conf_inputs", None)
+                    if getattr(self.speculator, "_log_hidden", False)
+                    else None,
+                    fitted=getattr(self.speculator, "draft_fitted_conf", None),
                 )
 
         if self.num_speculative_steps > 0:

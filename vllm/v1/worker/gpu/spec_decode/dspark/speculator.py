@@ -23,6 +23,7 @@ CUDA graphs (FULL, mirroring DFlash) cover the whole draft step: the parallel
 backbone forward AND the sequential Markov sampling.
 """
 
+import os
 from typing import Any
 
 import torch
@@ -32,9 +33,44 @@ from vllm.config.compilation import CUDAGraphMode
 from vllm.logger import init_logger
 from vllm.v1.worker.gpu.sample.gumbel import gumbel_sample
 from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
+from vllm.v1.worker.gpu.spec_decode.depth_policy import depth_policy_requested
 from vllm.v1.worker.gpu.spec_decode.dspark.utils import load_dspark_model
 
 logger = init_logger(__name__)
+
+
+def conf_head_override(
+    head: dict[str, torch.Tensor],
+    hidden: torch.Tensor,
+    markov_embed: torch.Tensor,
+    num_reqs: int,
+    n_spec: int,
+) -> torch.Tensor:
+    """VLLM_DSPARK_CONF_HEAD: per draft position i, sigmoid(x . w[i] + b[i]) over x =
+    [hidden, Markov embedding] in fp32 as the checkpoint's head reads it, plus, with
+    w1 [k, H, D] / b1 [k, H] / w2 [k, H] (/ b2 [k]), a residual MLP
+    w2[i] . gelu(w1[i] x + b1[i]); returns [num_reqs * n_spec] probabilities."""
+    x = torch.cat([hidden, markov_embed], dim=-1).float().view(num_reqs, n_spec, -1)
+    z = (x * head["w"][None, :n_spec]).sum(-1) + head["b"][None, :n_spec]
+    if "w1" in head:
+        u = torch.einsum("rpd,phd->rph", x, head["w1"][:n_spec]) + head["b1"][None, :n_spec]
+        z = z + (torch.nn.functional.gelu(u) * head["w2"][None, :n_spec]).sum(-1)
+        if "b2" in head:
+            z = z + head["b2"][None, :n_spec]
+    return torch.sigmoid(z).flatten()
+
+
+def conf_feat_head(
+    confidence: torch.Tensor, feats: torch.Tensor, w: torch.Tensor
+) -> torch.Tensor:
+    """VLLM_DSPARK_CONF_FEAT_HEAD: per draft position i, sigmoid(w[i, 0] + w[i, 1] z_i
+    + w[i, 2] m_i + w[i, 3] logit(p1_i)) over the head's logit z_i = logit(c_i), the
+    draft's (top-1 - top-2) logit margin m_i and its top-1 probability p1_i, logits
+    clamped at 1e-6 as scripts/dspark/fit_draft_features.py fits them. confidence
+    [reqs, k], feats [reqs, k, 2], w [k, 4] -> [reqs, k]."""
+    z = torch.logit(confidence.float(), eps=1e-6)
+    lp = torch.logit(feats[..., 1], eps=1e-6)
+    return torch.sigmoid(w[:, 0] + w[:, 1] * z + w[:, 2] * feats[..., 0] + w[:, 3] * lp)
 
 
 class DSparkSpeculator(DFlashSpeculator):
@@ -80,6 +116,19 @@ class DSparkSpeculator(DFlashSpeculator):
         )
 
         self.use_confidence_head: bool = False
+        self._markov_by_ids: bool = False
+        self._local_argmax: bool = False
+        self._feat_head: torch.Tensor | None = None
+        self._feat_rec: torch.Tensor | None = None
+        self.draft_fitted_conf: torch.Tensor | None = None
+        self._log_feats: bool = False
+        self.draft_feats = torch.zeros(
+            self.max_num_reqs, self.num_speculative_steps, 2,
+            dtype=torch.float32, device=device,
+        )
+        self._log_hidden: bool = False
+        self.conf_inputs: torch.Tensor | None = None
+        self._conf_head: dict[str, torch.Tensor] | None = None
 
     def load_draft_model(
         self,
@@ -103,14 +152,89 @@ class DSparkSpeculator(DFlashSpeculator):
                 dtype=self.draft_logits.dtype,
                 device=self.device,
             )
+        # The per-round depth policy (depth_policy.py) reads the confidences too.
         self.use_confidence_head = (
-            self.enable_adaptive_verification
-            and model.model.confidence_head is not None
-        )
+            self.enable_adaptive_verification or depth_policy_requested()
+        ) and model.model.confidence_head is not None
         if self.use_confidence_head:
             # The acceptance estimator is not needed when a trained confidence head
             # is available.
             self.use_acceptance_estimator = False
+        self._markov_by_ids = hasattr(model, "markov_bias_for_ids")
+        # The local argmax never materializes full draft logits: greedy drafting only, and
+        # no acceptance estimator (it reads the full logits; the confidence head replaces it).
+        self._local_argmax = (
+            getattr(model, "supports_local_argmax", lambda: False)()
+            and self.draft_logits is None
+            and not self.use_acceptance_estimator
+            and self._draft_topk is None
+        )
+        if self._local_argmax:
+            logger.info("DSpark: greedy drafts argmax per vocabulary shard (local argmax)")
+        self._log_feats = (
+            self._local_argmax
+            and os.environ.get("VLLM_DSPARK_CONF_LOG_FEATURES", "0") == "1"
+            and bool(os.environ.get("VLLM_DSPARK_CONF_LOG"))
+        )
+        if self._log_feats:
+            logger.info("DSpark: draft margins and top-1 probabilities logged per round")
+        self._log_hidden = (
+            self.use_confidence_head
+            and os.environ.get("VLLM_DSPARK_CONF_LOG_HIDDEN", "0") == "1"
+            and bool(os.environ.get("VLLM_DSPARK_CONF_LOG"))
+        )
+        path = os.environ.get("VLLM_DSPARK_CONF_HEAD")
+        if path and self.use_confidence_head:
+            import numpy as np
+
+            z = np.load(path)
+            head = {key: torch.tensor(z[key], dtype=torch.float32, device=self.device)
+                    for key in z.files}
+            k = self.num_speculative_steps
+            if head["w"].shape[0] < k or ("w1" in head) != ("w2" in head):
+                raise ValueError(f"VLLM_DSPARK_CONF_HEAD={path}: needs w [>= {k}, D] (+ w1, b1, w2)")
+            self._conf_head = head
+            logger.info(
+                "DSpark confidence head from %s (%s)", path,
+                "linear + MLP" if "w1" in head else "linear",
+            )
+        fpath = os.environ.get("VLLM_DSPARK_CONF_FEAT_HEAD")
+        if fpath:
+            if not (
+                self._local_argmax
+                and self.use_confidence_head
+                and getattr(model, "supports_feature_records", lambda: False)()
+            ):
+                raise ValueError(
+                    f"VLLM_DSPARK_CONF_FEAT_HEAD={fpath}: needs the local draft argmax, "
+                    "VLLM_DSPARK_MARKOV_FUSED=1 and the confidence head"
+                )
+            import numpy as np
+
+            w = np.load(fpath)["w"]
+            k = self.num_speculative_steps
+            if w.ndim != 2 or w.shape[0] < k or w.shape[1] != 4:
+                raise ValueError(
+                    f"VLLM_DSPARK_CONF_FEAT_HEAD={fpath}: needs w [>= {k}, 4], got {w.shape}"
+                )
+            self._feat_head = torch.tensor(w[:k], dtype=torch.float32, device=self.device)
+            self._feat_rec = torch.zeros(
+                self.max_num_reqs, k, model.lm_head.tp_size, 4,
+                dtype=torch.float32, device=self.device,
+            )
+            self.draft_fitted_conf = torch.zeros(
+                self.max_num_reqs, k, dtype=torch.float32, device=self.device
+            )
+            logger.info("DSpark confidence from the head + draft features in %s", fpath)
+        if self._log_hidden:
+            width = self.draft_model_config.get_hidden_size() + int(
+                getattr(self.draft_model_config.hf_config, "dspark_markov_rank", 0) or 0
+            )
+            self.conf_inputs = torch.zeros(
+                self.max_num_reqs, self.num_speculative_steps, width,
+                dtype=torch.bfloat16, device=self.device,
+            )
+            logger.info("DSpark: the confidence head's inputs (%d a position) logged", width)
         return model
 
     def _sample_logits(
@@ -163,8 +287,12 @@ class DSparkSpeculator(DFlashSpeculator):
         num_sample = num_reqs * n_spec
         # Per-(req, position) head hidden, ordered (req, step).
         sample_hidden = head_hidden[self.sample_indices[:num_sample]]
-        # Draft-vocab logits; sampled ids are remapped to target vocab below.
-        base_logits = self.model.compute_draft_logits(sample_hidden)
+        if self._local_argmax:
+            # this rank's vocabulary shard of the base logits, never gathered
+            base_logits = self.model.compute_draft_logits_local(sample_hidden)
+        else:
+            # Draft-vocab logits; sampled ids are remapped to target vocab below.
+            base_logits = self.model.compute_draft_logits(sample_hidden)
         vocab_size = base_logits.shape[-1]
         base_logits = base_logits.view(num_reqs, n_spec, vocab_size)
 
@@ -181,7 +309,25 @@ class DSparkSpeculator(DFlashSpeculator):
             markov_embed = self.model.markov_embed(prev)
             if self.use_confidence_head:
                 confidence_markov_embeds.append(markov_embed)
-            bias = self.model.markov_bias(markov_embed)
+            if self._local_argmax:
+                draft_sampled_i = self.model.draft_argmax_local(
+                    base_logits[:, i],
+                    prev,
+                    markov_embed,
+                    feat_out=self.draft_feats[:num_reqs, i]
+                    if self._log_feats and self._feat_rec is None
+                    else None,
+                    rec_out=self._feat_rec[:num_reqs, i]
+                    if self._feat_rec is not None
+                    else None,
+                )
+                self.draft_tokens[:num_reqs, i] = draft_sampled_i
+                prev = draft_sampled_i
+                continue
+            if self._markov_by_ids:
+                bias = self.model.markov_bias_for_ids(prev, markov_embed)
+            else:
+                bias = self.model.markov_bias(markov_embed)
             logits_i = base_logits[:, i] + bias
             draft_sampled_i = self._sample_logits(
                 logits_i, idx_map[:, i], sample_pos[:, i], i
@@ -190,13 +336,37 @@ class DSparkSpeculator(DFlashSpeculator):
             prev = draft_sampled_i
 
         if self.use_confidence_head:
-            confidence = self.model.compute_confidence(
-                sample_hidden,
-                torch.stack(confidence_markov_embeds, dim=1).flatten(0, 1),
-            )
+            markov_cat = torch.stack(confidence_markov_embeds, dim=1).flatten(0, 1)
+            if self._conf_head is not None:
+                confidence = self._confidence_override(
+                    sample_hidden, markov_cat, num_reqs, n_spec
+                )
+            else:
+                confidence = self.model.compute_confidence(sample_hidden, markov_cat)
             self.draft_token_confidence_probs[:num_reqs] = confidence.view(
                 num_reqs, n_spec
             )
+            if self._feat_head is not None:
+                feats = self.model.draft_features(self._feat_rec[:num_reqs])
+                self.draft_fitted_conf[:num_reqs] = conf_feat_head(
+                    confidence.view(num_reqs, n_spec), feats, self._feat_head
+                )
+                if self._log_feats:
+                    self.draft_feats[:num_reqs] = feats
+            if self._log_hidden and self.conf_inputs is not None:
+                dt = self.conf_inputs.dtype
+                self.conf_inputs[:num_reqs] = torch.cat(
+                    [sample_hidden.to(dt), markov_cat.to(dt)], dim=-1
+                ).view(num_reqs, n_spec, -1)
+
+    def _confidence_override(
+        self,
+        hidden: torch.Tensor,
+        markov_embed: torch.Tensor,
+        num_reqs: int,
+        n_spec: int,
+    ) -> torch.Tensor:
+        return conf_head_override(self._conf_head, hidden, markov_embed, num_reqs, n_spec)
 
     def _sample_sequential_topk(self, num_reqs: int, head_hidden: torch.Tensor) -> None:
         """Apply the sequential Markov head only to top-k base-logit candidates.

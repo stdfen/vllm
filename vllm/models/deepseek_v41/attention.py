@@ -81,17 +81,21 @@ from vllm.v1.kv_cache_interface import (
 
 logger = init_logger(__name__)
 
+# Decode-size bf16 input projections (the compressor's wkv / wgate, the indexer's weights_proj and wk) on the EXL3
+# plugin's row GEMM when EXL3_ROWMM=1 (vllm_exl3_moe/rowmm.py); otherwise, or for shapes it does not take, cuBLAS.
+try:
+    from vllm_exl3_moe import rowmm as _rowmm
+except ImportError:
+    _rowmm = None
 
-def _dsv41_cache_block_size(block_size: int, compress_ratio: int) -> int:
-    """Keep 64 stored states per DeepSeek-V4.1 page on SM120.
 
-    The GB10 DeepGEMM indexer accepts only 32/64 states per page.  A cache
-    compressed by ``r`` therefore needs ``64 * r`` tokens per physical page,
-    while ratio-one caches use the CLI's 64-token block unchanged.
-    """
-    if current_platform.is_device_capability_family(120) and compress_ratio > 1:
-        return block_size * compress_ratio
-    return block_size
+def _rowmm_or_none(
+    x: torch.Tensor, w: torch.Tensor, out_dtype: torch.dtype
+) -> torch.Tensor | None:
+    """x @ w.T as out_dtype on the plugin's row GEMM, or None when it does not apply."""
+    if _rowmm is not None and _rowmm.ok(x, w):
+        return _rowmm.mm(x, w, out_dtype)
+    return None
 
 
 def _replace_layer_index(prefix: str, layer_id: int) -> str:
@@ -968,6 +972,13 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
 
             def compressor_kv_score() -> torch.Tensor:
                 projection = compressor.fused_wkv_wgate
+                weight = getattr(projection, "weight", None)
+                if weight is not None:
+                    kv_score = _rowmm_or_none(
+                        hidden_states, weight, torch.float32
+                    )
+                    if kv_score is not None:
+                        return kv_score
                 if hasattr(projection, "trellis"):
                     return projection.quant_method.apply(
                         projection, hidden_states
@@ -984,6 +995,11 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
             indexer = self.indexer
 
             def indexer_weights_proj() -> torch.Tensor:
+                weights = _rowmm_or_none(
+                    hidden_states, indexer.weights_proj.weight, hidden_states.dtype
+                )
+                if weights is not None:
+                    return weights
                 # ReplicatedLinear returns (output, bias); bias is None.
                 weights, _ = indexer.weights_proj(hidden_states)
                 return weights
@@ -1167,9 +1183,7 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
         # use natural element-size pages.
         uses_fp8_ds_mla_layout = self.kv_cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla")
         return MLAAttentionSpec(
-            block_size=_dsv41_cache_block_size(
-                vllm_config.cache_config.block_size, self.compress_ratio
-            ),
+            block_size=vllm_config.cache_config.block_size,
             num_kv_heads=1,
             head_size=self.head_dim,
             dtype=torch.uint8 if uses_fp8_ds_mla_layout else self.kv_cache_torch_dtype,
@@ -1239,9 +1253,7 @@ class DeepseekV4IndexerCache(torch.nn.Module, AttentionLayerBase):
             576 if uses_fp8_ds_mla_layout and not _use_v41_mxfp8_kv_record() else 512
         )
         return MLAAttentionSpec(
-            block_size=_dsv41_cache_block_size(
-                self.cache_config.block_size, self.compress_ratio
-            ),
+            block_size=self.cache_config.block_size,
             num_kv_heads=1,
             head_size=self.head_dim,
             dtype=self.dtype,
@@ -1367,13 +1379,12 @@ class DeepseekV4Indexer(nn.Module):
         assert cache_config is not None, "Deepseek V4 indexer requires cache_config"
         if owns_k:
             # wk maps the main compressor's (pre-RoPE) latent to index keys.
-            # EXL3 checkpoints pack wk while dense checkpoints keep the native
-            # weight, so let the quantization config decide per prefix.
+            # The checkpoint stores wk in BF16 with no quantization pieces.
             self.wk = ReplicatedLinear(
                 main_head_dim,
                 self.head_dim,
                 bias=False,
-                quant_config=quant_config,
+                quant_config=None,
                 prefix=f"{prefix}.wk",
             )
             self.k_norm = RMSNorm(self.head_dim, config.rms_norm_eps)
@@ -1448,7 +1459,9 @@ class DeepseekV4Indexer(nn.Module):
         # ReplicatedLinear returns (output, bias); bias is None. Rows at
         # non-boundary tokens hold garbage latent and are skipped by the
         # store kernel.
-        k_pre, _ = self.wk(latent)
+        k_pre = _rowmm_or_none(latent, self.wk.weight, latent.dtype)
+        if k_pre is None:
+            k_pre, _ = self.wk(latent)
         indexer_k_norm_rope_store(
             k_pre,
             positions,
