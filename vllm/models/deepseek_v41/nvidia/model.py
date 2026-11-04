@@ -1748,6 +1748,12 @@ class DeepseekV41LLMForCausalLM(
     def process_weights_after_loading(self) -> None:
         self.model.finalize_mega_moe_weights()
         self.model.finalize_mhc_broadcast_weights()
+        try:
+            from vllm_exl3_moe.l2pf import register_decoder_layers
+        except ImportError:
+            register_decoder_layers = None
+        if register_decoder_layers is not None:
+            register_decoder_layers(self.model)
 
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
         return self.model.get_expert_mapping()

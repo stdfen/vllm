@@ -32,8 +32,17 @@ COPY vllm/models/deepseek_v41/nvidia/vl_model.py \
     ${VLLM_SITE}/models/deepseek_v41/nvidia/vl_model.py
 COPY vllm/models/deepseek_v41/nvidia/dspark.py \
     ${VLLM_SITE}/models/deepseek_v41/nvidia/dspark.py
+COPY vllm/models/deepseek_v41/nvidia/flashinfer_sparse.py \
+    ${VLLM_SITE}/models/deepseek_v41/nvidia/flashinfer_sparse.py
 COPY vllm/models/deepseek_v4/nvidia/ops/o_proj.py \
     ${VLLM_SITE}/models/deepseek_v4/nvidia/ops/o_proj.py
+COPY vllm/utils/flashinfer.py ${VLLM_SITE}/utils/flashinfer.py
+COPY vllm/v1/worker/gpu/cudagraph_utils.py \
+    ${VLLM_SITE}/v1/worker/gpu/cudagraph_utils.py
+COPY vllm/v1/worker/gpu/model_runner.py \
+    ${VLLM_SITE}/v1/worker/gpu/model_runner.py
+COPY vllm/v1/worker/gpu/short_ctx.py \
+    ${VLLM_SITE}/v1/worker/gpu/short_ctx.py
 COPY vllm/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py \
     ${VLLM_SITE}/model_executor/layers/rotary_embedding/deepseek_scaling_rope.py
 COPY vllm/v1/attention/backends/mla/sparse_swa.py \

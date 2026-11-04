@@ -15,8 +15,30 @@ from vllm.models.deepseek_v41.common.engram import (
     Engram,
     NgramHashState,
     ParallelEngramEmbedding,
+    engram_wkv_row_parallel,
 )
 from vllm.platforms import current_platform
+
+
+def test_engram_wkv_row_parallel_requires_compatible_head_shard(monkeypatch):
+    embedding = SimpleNamespace(
+        tp_size=2,
+        dp_size=1,
+        part_n_hash_cols=3,
+        n_hash_cols=6,
+        head_start=0,
+    )
+    monkeypatch.setenv("VLLM_ENGRAM_WKV_ROWPAR", "1")
+    monkeypatch.setattr(engram_ops, "get_tensor_model_parallel_rank", lambda: 0)
+    assert engram_wkv_row_parallel(embedding, False)
+
+    embedding.n_hash_cols = 7
+    assert not engram_wkv_row_parallel(embedding, False)
+    embedding.n_hash_cols = 6
+    embedding.dp_size = 2
+    assert not engram_wkv_row_parallel(embedding, False)
+    embedding.dp_size = 1
+    assert not engram_wkv_row_parallel(embedding, True)
 
 
 def _reference_engram_post_wkv(

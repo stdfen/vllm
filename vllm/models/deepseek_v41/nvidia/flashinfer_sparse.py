@@ -634,7 +634,10 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
 
     def __init__(self, vllm_config: VllmConfig, *args, **kwargs) -> None:
         super().__init__(vllm_config, *args, **kwargs)
-        from vllm.utils.flashinfer import has_flashinfer_sparse_mla_sm120_config
+        from vllm.utils.flashinfer import (
+            has_flashinfer_sparse_mla_sm120_config,
+            has_flashinfer_sparse_mla_sm120_prefill_config,
+        )
 
         required_topk = _required_sm120_sparse_topk(vllm_config, self.window_size)
         if not has_flashinfer_sparse_mla_sm120_config(self.padded_heads, required_topk):
@@ -644,6 +647,29 @@ class DeepseekV4FlashInferSM120Attention(DeepseekV4Attention):
                 f"(num_q_heads={self.padded_heads}, top_k={required_topk}). "
                 "Install a FlashInfer build containing "
                 "flashinfer-ai/flashinfer#4380."
+            )
+        extra_topk = (
+            int(vllm_config.model_config.hf_config.index_topk)
+            if self.compress_ratio > 0
+            else 0
+        )
+        extra_page_block_size = (
+            vllm_config.cache_config.block_size if extra_topk > 0 else 0
+        )
+        if not has_flashinfer_sparse_mla_sm120_prefill_config(
+            self.padded_heads,
+            required_topk,
+            self.swa_cache_block_size,
+            extra_topk,
+            extra_page_block_size,
+        ):
+            raise RuntimeError(
+                "FLASHINFER_MLA_SPARSE_DSV4 does not support the configured "
+                "prefill cache geometry: "
+                f"num_q_heads={self.padded_heads}, swa_top_k={required_topk}, "
+                f"page_block_size={self.swa_cache_block_size}, "
+                f"extra_top_k={extra_topk}, "
+                f"extra_page_block_size={extra_page_block_size}."
             )
         self._einsum_recipe, self._tma_aligned_scales = compute_fp8_einsum_recipe(
             self._o_proj_block_size

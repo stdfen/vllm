@@ -37,7 +37,8 @@ def request(base: str, payload: dict) -> dict:
             if event.get("usage"):
                 usage = event["usage"]
             for choice in event.get("choices", []):
-                text = choice.get("delta", {}).get("content") or ""
+                delta = choice.get("delta", {})
+                text = delta.get("content") or delta.get("reasoning") or ""
                 if text:
                     if first is None:
                         first = time.perf_counter()

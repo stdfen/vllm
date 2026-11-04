@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import sys
+from types import ModuleType, SimpleNamespace
+
 import torch
 
 
@@ -80,3 +83,24 @@ def test_o_proj_dispatches_grouped_exl3_without_dense_weight(monkeypatch) -> Non
     expected = (grouped_input[..., :output_size] + 7).to(torch.bfloat16)
     torch.testing.assert_close(observed["value"], expected.flatten(1))
     torch.testing.assert_close(result, expected.flatten(1))
+
+
+def test_process_weights_registers_exl3_l2_prefetch(monkeypatch) -> None:
+    from vllm.models.deepseek_v41.nvidia.model import DeepseekV41LLMForCausalLM
+
+    calls = []
+    plugin = ModuleType("vllm_exl3_moe")
+    l2pf = ModuleType("vllm_exl3_moe.l2pf")
+    l2pf.register_decoder_layers = lambda model: calls.append(("l2pf", model))
+    monkeypatch.setitem(sys.modules, "vllm_exl3_moe", plugin)
+    monkeypatch.setitem(sys.modules, "vllm_exl3_moe.l2pf", l2pf)
+
+    model = SimpleNamespace(
+        finalize_mega_moe_weights=lambda: calls.append(("mega", None)),
+        finalize_mhc_broadcast_weights=lambda: calls.append(("mhc", None)),
+    )
+    instance = SimpleNamespace(model=model)
+
+    DeepseekV41LLMForCausalLM.process_weights_after_loading(instance)
+
+    assert calls == [("mega", None), ("mhc", None), ("l2pf", model)]

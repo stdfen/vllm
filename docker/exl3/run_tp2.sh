@@ -17,10 +17,30 @@ KV_BLOCK_SIZE=${KV_BLOCK_SIZE:-64}
 SPEC_METHOD=${SPEC_METHOD:-none}
 DSPARK_TOKENS=${DSPARK_TOKENS:-3}
 CUDAGRAPH_CAPTURE_SIZES=${CUDAGRAPH_CAPTURE_SIZES:-"1 2 3 4 6 8 12 18 24"}
+ENABLE_AUTO_TOOL_CHOICE=${ENABLE_AUTO_TOOL_CHOICE:-1}
+TOOL_CALL_PARSER=${TOOL_CALL_PARSER:-deepseek_v41}
+REASONING_PARSER=${REASONING_PARSER:-deepseek_v41}
+TP_PEER_WATCHDOG=${TP_PEER_WATCHDOG:-1}
+TP_PEER_WATCHDOG_INTERVAL=${TP_PEER_WATCHDOG_INTERVAL:-2}
+TP_PEER_WATCHDOG_FAILURES=${TP_PEER_WATCHDOG_FAILURES:-5}
+AUTHOR_OPTIMIZATIONS=${AUTHOR_OPTIMIZATIONS:-1}
 
 export VLLM_PINNED_WEIGHT_STAGING=${VLLM_PINNED_WEIGHT_STAGING:-auto}
 export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-enP7s7}
 export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-enP7s7}
+
+if [[ "${AUTHOR_OPTIMIZATIONS}" == "1" ]]; then
+  export VLLM_SHORT_CTX_BOUNDS=${VLLM_SHORT_CTX_BOUNDS:-512,1025}
+  export VLLM_SHORT_CTX_MARGIN=${VLLM_SHORT_CTX_MARGIN:-16}
+  export VLLM_ENGRAM_WKV_ROWPAR=${VLLM_ENGRAM_WKV_ROWPAR:-1}
+  export EXL3_L2PF=${EXL3_L2PF:-attn,moe,next}
+  export EXL3_L2PF_ORDER=${EXL3_L2PF_ORDER:-1}
+  export EXL3_L2PF_DRAFTER=${EXL3_L2PF_DRAFTER:-1}
+  export EXL3_L2PF_HC=${EXL3_L2PF_HC:-1}
+elif [[ "${AUTHOR_OPTIMIZATIONS}" != "0" ]]; then
+  echo "unsupported AUTHOR_OPTIMIZATIONS=${AUTHOR_OPTIMIZATIONS}; expected 0 or 1" >&2
+  exit 2
+fi
 
 python3 /opt/vllm-exl3/tp2_preflight.py \
   --model "${MODEL_DIR}" \
@@ -55,6 +75,17 @@ if [[ -n "${SERVED_MODEL_NAME:-}" ]]; then
   extra_args+=(--served-model-name "${SERVED_MODEL_NAME}")
 fi
 
+if [[ "${ENABLE_AUTO_TOOL_CHOICE}" == "1" ]]; then
+  extra_args+=(
+    --enable-auto-tool-choice
+    --tool-call-parser "${TOOL_CALL_PARSER}"
+    --reasoning-parser "${REASONING_PARSER}"
+  )
+elif [[ "${ENABLE_AUTO_TOOL_CHOICE}" != "0" ]]; then
+  echo "unsupported ENABLE_AUTO_TOOL_CHOICE=${ENABLE_AUTO_TOOL_CHOICE}; expected 0 or 1" >&2
+  exit 2
+fi
+
 # Only rank 0 owns the API server and EngineCore client.  Secondary nodes in
 # vLLM's multi-node MP executor must run the follower executor in headless
 # mode; otherwise they incorrectly initialize a second EngineCore and attempt
@@ -63,7 +94,7 @@ if [[ "${NODE_RANK}" != "0" ]]; then
   extra_args+=(--headless)
 fi
 
-exec vllm serve "${MODEL_DIR}" \
+vllm serve "${MODEL_DIR}" \
   --host 0.0.0.0 \
   --port "${API_PORT}" \
   --trust-remote-code \
@@ -82,4 +113,52 @@ exec vllm serve "${MODEL_DIR}" \
   --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
   --no-enable-flashinfer-autotune \
   --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
-  "${extra_args[@]}"
+  "${extra_args[@]}" &
+
+serve_pid=$!
+watchdog_pid=
+
+watch_master() {
+  local seen=0 failures=0
+  while kill -0 "${serve_pid}" 2>/dev/null; do
+    if timeout 1 bash -c "</dev/tcp/${MASTER_ADDR}/${MASTER_PORT}" 2>/dev/null; then
+      seen=1
+      failures=0
+    elif [[ "${seen}" == "1" ]]; then
+      failures=$((failures + 1))
+      if (( failures >= TP_PEER_WATCHDOG_FAILURES )); then
+        echo "rank 0 rendezvous disappeared; terminating rank ${NODE_RANK}" >&2
+        kill -TERM "${serve_pid}" 2>/dev/null || true
+        return
+      fi
+    fi
+    sleep "${TP_PEER_WATCHDOG_INTERVAL}"
+  done
+}
+
+if [[ "${NODE_RANK}" != "0" && "${TP_PEER_WATCHDOG}" == "1" ]]; then
+  watch_master &
+  watchdog_pid=$!
+fi
+
+terminate_serve() {
+  if [[ -n "${watchdog_pid}" ]]; then
+    kill "${watchdog_pid}" 2>/dev/null || true
+  fi
+  if kill -0 "${serve_pid}" 2>/dev/null; then
+    kill -TERM "${serve_pid}" 2>/dev/null || true
+    wait "${serve_pid}" || true
+  fi
+}
+trap terminate_serve TERM INT EXIT
+if wait "${serve_pid}"; then
+  serve_status=0
+else
+  serve_status=$?
+fi
+if [[ -n "${watchdog_pid}" ]]; then
+  kill "${watchdog_pid}" 2>/dev/null || true
+  wait "${watchdog_pid}" 2>/dev/null || true
+fi
+trap - TERM INT EXIT
+exit "${serve_status}"

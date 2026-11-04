@@ -81,8 +81,36 @@ from vllm.v1.kv_cache_interface import (
 
 logger = init_logger(__name__)
 
-# Decode-size bf16 input projections (the compressor's wkv / wgate, the indexer's weights_proj and wk) on the EXL3
-# plugin's row GEMM when EXL3_ROWMM=1 (vllm_exl3_moe/rowmm.py); otherwise, or for shapes it does not take, cuBLAS.
+
+def _dsv41_cache_block_size(base_block_size: int, compress_ratio: int) -> int:
+    """Return the token block size that preserves states per cache page."""
+    if base_block_size <= 0:
+        raise ValueError(
+            f"base_block_size must be positive, got {base_block_size}"
+        )
+    if compress_ratio <= 0:
+        raise ValueError(f"compress_ratio must be positive, got {compress_ratio}")
+    return base_block_size * compress_ratio
+
+
+def _validate_dsv41_sm12x_cache_geometry(
+    block_size: int, compress_ratio: int, cache_name: str
+) -> None:
+    if not (
+        current_platform.is_device_capability_family(120)
+        or current_platform.is_device_capability_family(121)
+    ):
+        return
+    states_per_page = block_size // compress_ratio
+    if states_per_page != 64:
+        raise ValueError(
+            "SM120/SM121 requires 64 states per page for "
+            f"{cache_name}, but got {states_per_page} "
+            f"(block_size={block_size}, compress_ratio={compress_ratio})."
+        )
+
+# Decode-size bf16 input projections (the compressor's wkv / wgate and the
+# indexer's weights_proj / wk) use the plugin row GEMM when EXL3_ROWMM=1.
 try:
     from vllm_exl3_moe import rowmm as _rowmm
 except ImportError:
@@ -92,7 +120,7 @@ except ImportError:
 def _rowmm_or_none(
     x: torch.Tensor, w: torch.Tensor, out_dtype: torch.dtype
 ) -> torch.Tensor | None:
-    """x @ w.T as out_dtype on the plugin's row GEMM, or None when it does not apply."""
+    """X @ w.T through the plugin row GEMM, or None when it does not apply."""
     if _rowmm is not None and _rowmm.ok(x, w):
         return _rowmm.mm(x, w, out_dtype)
     return None
@@ -1181,9 +1209,18 @@ class DeepseekV4Attention(nn.Module, AttentionLayerBase, ABC):
         # fp8_ds_mla is a UE8M0 block-scaled uint8 layout whose page rounds up
         # to the decode kernel's TMA stride; plain bf16 / per-tensor fp8 rows
         # use natural element-size pages.
-        uses_fp8_ds_mla_layout = self.kv_cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla")
+        uses_fp8_ds_mla_layout = self.kv_cache_dtype in (
+            "fp8_ds_mla",
+            "nvfp4_ds_mla",
+        )
+        spec_block_size = _dsv41_cache_block_size(
+            vllm_config.cache_config.block_size, self.compress_ratio
+        )
+        _validate_dsv41_sm12x_cache_geometry(
+            spec_block_size, self.compress_ratio, "compressed-KV cache"
+        )
         return MLAAttentionSpec(
-            block_size=vllm_config.cache_config.block_size,
+            block_size=spec_block_size,
             num_kv_heads=1,
             head_size=self.head_dim,
             dtype=torch.uint8 if uses_fp8_ds_mla_layout else self.kv_cache_torch_dtype,
@@ -1252,8 +1289,14 @@ class DeepseekV4IndexerCache(torch.nn.Module, AttentionLayerBase):
         page_alignment = (
             576 if uses_fp8_ds_mla_layout and not _use_v41_mxfp8_kv_record() else 512
         )
+        spec_block_size = _dsv41_cache_block_size(
+            self.cache_config.block_size, self.compress_ratio
+        )
+        _validate_dsv41_sm12x_cache_geometry(
+            spec_block_size, self.compress_ratio, "indexer cache"
+        )
         return MLAAttentionSpec(
-            block_size=self.cache_config.block_size,
+            block_size=spec_block_size,
             num_kv_heads=1,
             head_size=self.head_dim,
             dtype=self.dtype,
@@ -1517,9 +1560,17 @@ class DeepseekV4Indexer(nn.Module):
         attn_metadata = get_forward_context().attn_metadata
         if isinstance(attn_metadata, dict):
             indexer_metadata = cast(Any, attn_metadata[self.k_cache.prefix])
+            from vllm.v1.worker.gpu.short_ctx import capture_bound
+
+            capturing = torch.cuda.is_current_stream_capturing()
+            bound = capture_bound() if capturing else None
             if (
-                indexer_metadata.max_seq_len // self.compress_ratio <= self.topk_tokens
-                and not torch.cuda.is_current_stream_capturing()
+                not capturing
+                and indexer_metadata.max_seq_len // self.compress_ratio
+                <= self.topk_tokens
+            ) or (
+                bound is not None
+                and bound // self.compress_ratio <= self.topk_tokens
             ):
                 # candidates num smaller than topk, every candidate is selected
                 # but we still need to build k cache

@@ -85,6 +85,7 @@ from vllm.v1.watermarking.spec_decode import (
 from vllm.v1.worker.block_table import get_block_table_width
 from vllm.v1.worker.cp_utils import check_attention_cp_compatibility
 from vllm.v1.worker.gpu import pcp_manager as pcp
+from vllm.v1.worker.gpu import short_ctx
 from vllm.v1.worker.gpu.async_utils import (
     AsyncOutput,
     AsyncPoolingOutput,
@@ -1869,6 +1870,21 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # when encoder inputs are scheduled, because this step updates
             # cross-attention cache with dynamic encoder outputs.
             skip_compiled = True
+
+        max_seq_len = None
+        if (
+            short_ctx.BOUNDS
+            and batch_req_state is not None
+            and not batch_req_state.has_prefill
+        ):
+            indices = batch_req_state.idx_mapping_np
+            max_seq_len = int(
+                (
+                    self.req_states.num_computed_tokens_np[indices]
+                    + batch_req_state.num_scheduled_tokens
+                ).max()
+            ) + short_ctx.MARGIN
+        short_ctx.set_dispatch_max_seq_len(max_seq_len)
 
         batch_desc, dp_sync_state = dispatch_cg_and_sync_dp(
             self.cudagraph_manager,

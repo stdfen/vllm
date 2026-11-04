@@ -474,6 +474,32 @@ def has_flashinfer_sparse_mla_sm120_config(num_q_heads: int, top_k: int) -> bool
 
 
 @functools.cache
+def has_flashinfer_sparse_mla_sm120_prefill_config(
+    num_q_heads: int,
+    swa_top_k: int,
+    page_block_size: int,
+    extra_top_k: int,
+    extra_page_block_size: int,
+) -> bool:
+    """Return whether the SM120 DSV4 sparse prefill geometry is supported.
+
+    FlashInfer uses its sparse decode entry point for chunked prefill. Its
+    DSV4 kernel requires both the SWA and compressed-cache pages to contain
+    64 states. Keep the geometry check separate from the decode dispatch
+    lookup so an incompatible cache spec fails during model construction.
+    """
+    if not has_flashinfer_sparse_mla_sm120_config(num_q_heads, swa_top_k):
+        return False
+    if page_block_size != 64:
+        return False
+    if extra_top_k < 0:
+        return False
+    if extra_top_k == 0:
+        return extra_page_block_size in (0, 64)
+    return extra_page_block_size == 64
+
+
+@functools.cache
 def has_flashinfer_cutedsl() -> bool:
     """Return ``True`` if FlashInfer cutedsl module is available."""
     return (

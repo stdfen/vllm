@@ -64,16 +64,19 @@ from vllm.distributed.parallel_state import GroupCoordinator
 from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fusion.quant_activation import QuantizedActivation
-from vllm.model_executor.layers.linear import ColumnParallelLinear
+from vllm.model_executor.layers.linear import (
+    ColumnParallelLinear,
+    RowParallelLinear,
+)
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.quantization.utils.quant_utils import kMxfp8Dynamic
 from vllm.model_executor.utils import set_weight_attrs
+from vllm.models.deepseek_v41.common.engram_file import SafetensorsEngramStore
 from vllm.models.deepseek_v41.common.ops.query_quant import (
     can_fuse_query_quant,
     mxfp8_scale_bytes,
     mxfp8_scale_offset,
 )
-from vllm.models.deepseek_v41.common.engram_file import SafetensorsEngramStore
 from vllm.platforms import current_platform
 from vllm.triton_utils import tl, triton
 from vllm.utils.platform_utils import is_uva_available
@@ -1030,7 +1033,9 @@ class ParallelEngramEmbedding(nn.Module):
         self.file_backed = file_table_dir is not None
         self.disk_offload = disk_source is not None
         if self.file_backed and self.disk_offload:
-            raise ValueError("Engram file_backed and disk_offload are mutually exclusive")
+            raise ValueError(
+                "Engram file_backed and disk_offload are mutually exclusive"
+            )
         if self.disk_offload:
             if not cpu_offload or dp_shared_memory or use_thp:
                 raise ValueError(
@@ -1566,6 +1571,35 @@ def _gather_engram_rows(staged: torch.Tensor, num_tokens: int) -> torch.Tensor:
     return rows
 
 
+def engram_wkv_row_parallel(
+    embedding: ParallelEngramEmbedding, use_sequence_parallel: bool
+) -> bool:
+    """Return whether WKV can consume this rank's hash-head shard directly."""
+    if os.environ.get("VLLM_ENGRAM_WKV_ROWPAR", "0") != "1":
+        return False
+    tp_size = embedding.tp_size
+    if tp_size == 1:
+        return False
+    if use_sequence_parallel:
+        reason = "sequence parallelism shards tokens, not hash heads"
+    elif embedding.dp_size > 1:
+        reason = f"the tables are DP-sharded over {embedding.dp_size} replicas"
+    elif embedding.part_n_hash_cols * tp_size != embedding.n_hash_cols:
+        reason = (
+            f"{embedding.n_hash_cols} hash heads do not split into "
+            f"{tp_size} equal shares"
+        )
+    else:
+        part = embedding.part_n_hash_cols
+        assert embedding.head_start == get_tensor_model_parallel_rank() * part
+        return True
+    logger.warning_once(
+        "VLLM_ENGRAM_WKV_ROWPAR ignored, Engram WKV stays column-parallel: %s",
+        reason,
+    )
+    return False
+
+
 @triton.jit(do_not_specialize=["num_tokens"])
 def _engram_unpack_fp8_kernel(
     packed,
@@ -1748,6 +1782,7 @@ class Engram(nn.Module):
     _prefetch_stream: torch.cuda.Stream | None = None
     _prefetch_done: torch.cuda.Event | None = None
     _batch: EngramBatch | None = None
+    wkv_row_parallel: bool = False
 
     def __init__(
         self,
@@ -1775,17 +1810,11 @@ class Engram(nn.Module):
         # suffix rule.
         self.embed_tokens = self._create_embedding(layout, layer_hash_index, prefix)
         n_hash_cols = (layout.max_ngram_size - 1) * layout.n_heads
-        # Without sequence parallelism every TP rank holds every token, so
-        # shard the output columns instead of replicating the projection.
-        self.wkv = ColumnParallelLinear(
+        self.wkv = self._create_wkv(
             n_hash_cols * layout.head_dim,
-            self.dim * (self.hc_mult + 1),
-            bias=False,
-            gather_output=True,
-            quant_config=quant_config,
-            return_bias=False,
-            prefix=f"{prefix}.wkv",
-            disable_tp=use_sequence_parallel,
+            quant_config,
+            use_sequence_parallel,
+            prefix,
         )
         self.q_weight = nn.Parameter(
             torch.empty(self.hc_mult, self.dim, dtype=torch.bfloat16),
@@ -1817,11 +1846,51 @@ class Engram(nn.Module):
             cpu_offload=engram_config.cpu_offload,
             dp_shared_memory=bool(engram_config.dp_shared_memory),
             use_thp=engram_config.use_thp,
-            file_table_dir=(engram_config.table_dir if engram_config.file_backed else None),
+            file_table_dir=(
+                engram_config.table_dir if engram_config.file_backed else None
+            ),
             file_tensor_prefix=(tensor_prefix if engram_config.file_backed else None),
             disk_source=disk_source,
             disk_threads=engram_config.disk_threads,
             disk_cache_rows=engram_config.disk_cache_rows,
+        )
+
+    def _create_wkv(
+        self,
+        input_size: int,
+        quant_config: QuantizationConfig | None,
+        use_sequence_parallel: bool,
+        prefix: str,
+    ) -> ColumnParallelLinear | RowParallelLinear:
+        output_size = self.dim * (self.hc_mult + 1)
+        self.wkv_row_parallel = engram_wkv_row_parallel(
+            self.embed_tokens, use_sequence_parallel
+        )
+        if self.wkv_row_parallel:
+            logger.info_once(
+                "Engram WKV row-parallel: %d hash heads per rank, "
+                "one all-reduce of [tokens, %d] per layer",
+                self.embed_tokens.part_n_hash_cols,
+                output_size,
+            )
+            return RowParallelLinear(
+                input_size,
+                output_size,
+                bias=False,
+                reduce_results=True,
+                quant_config=quant_config,
+                return_bias=False,
+                prefix=f"{prefix}.wkv",
+            )
+        return ColumnParallelLinear(
+            input_size,
+            output_size,
+            bias=False,
+            gather_output=True,
+            quant_config=quant_config,
+            return_bias=False,
+            prefix=f"{prefix}.wkv",
+            disable_tp=use_sequence_parallel,
         )
 
     def _init_staging(self, max_tokens: int, head_dim: int) -> None:
@@ -1891,7 +1960,7 @@ class Engram(nn.Module):
         return self.staged_rows[:num_tokens]
 
     def embed(self, hash_ids: torch.Tensor) -> torch.Tensor:
-        """Gather heads, returning only local tokens when SP is enabled."""
+        """Return rows in the layout consumed by this layer's WKV."""
         rows = self._ready_rows(hash_ids.shape[0])
         if self.embed_tokens.tp_size == 1:
             return rows[:, : self.embed_tokens.n_hash_cols]
@@ -1909,6 +1978,8 @@ class Engram(nn.Module):
                 local_heads * dim,
             )
             return out
+        if self.wkv_row_parallel:
+            return rows
         rows = tensor_model_parallel_all_gather(rows, dim=1)
         return rows[:, : self.embed_tokens.n_hash_cols]
 
