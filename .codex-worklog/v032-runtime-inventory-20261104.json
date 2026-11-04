@@ -1,0 +1,60 @@
+{
+    "schemaVersion":  1,
+    "taskId":  "v032-runtime-inventory-20261104",
+    "taskKey":  "vllm|deepseek-v41-v032|code-runtime-inventory",
+    "project":  "vllm",
+    "businessGoal":  "形成 vLLM 0.32 DeepSeek V4.1 当前代码改造、双机资源和部署参数的可追溯清单",
+    "deliverableType":  "deployment-inventory",
+    "themeKey":  "deepseek-v41-dgx-spark",
+    "updatedAt":  "2026-11-04T10:00:00+08:00",
+    "status":  "completed",
+    "verificationLevel":  "integration_verified",
+    "completed":  [
+                      "按四个 Git 提交梳理相对 v0.32.0 基线的 74 个改动文件及改动原因",
+                      "实时采集双节点 CPU、统一内存、磁盘、GB10、RoCE、容器、镜像、模型与启动参数",
+                      "核对 TP0 API、关键 DSpark/RowMM/SWA/RDMA 生效日志和现有 benchmark 结果",
+                      "输出独立 Markdown 资源与部署清单"
+                  ],
+    "decisions":  [
+                      "明确区分功能已部署与性能未达到作者基准",
+                      "将 8.96 根盘仅余 31 GiB 列为 P0 风险",
+                      "将同 tag 不同 image ID 和模型目录附加文件差异列为发布治理项"
+                  ],
+    "changedFiles":  [
+                         "docs/deployment/vllm_v032_dsv41_v35_code_and_runtime_inventory_20261104.md"
+                     ],
+    "testResults":  [
+                        "8.96 /v1/models returned model dsv41 and max_model_len 262144",
+                        "Both dsv41-serve containers reported running",
+                        "Both model directories contain 169 safetensors with identical logical byte count 406999747740",
+                        "Core config/index/confidence-head/MoE-plan SHA256 values match across nodes"
+                    ],
+    "blockers":  [
+
+                 ],
+    "nextSteps":  [
+                      "Clean 8.96 disk after exact target review",
+                      "Capture author v5 versus v35 CUDA traces for the remaining 2.4-3.3 ms per-round gap",
+                      "Publish one immutable image digest to both nodes"
+                  ],
+    "efficiencyMetrics":  {
+                              "manualBaselineMinutes":  null,
+                              "aiElapsedMinutes":  null,
+                              "reworkMinutes":  null,
+                              "source":  null
+                          },
+    "evidence":  [
+                     {
+                         "type":  "git",
+                         "reference":  "feature/v032-sudoingx-v20-gb10-tp2@f0b6e96abe"
+                     },
+                     {
+                         "type":  "runtime",
+                         "reference":  "intellif-96:intellif-164/dsv41-serve/v35"
+                     },
+                     {
+                         "type":  "document",
+                         "reference":  "docs/deployment/vllm_v032_dsv41_v35_code_and_runtime_inventory_20261104.md"
+                     }
+                 ]
+}
