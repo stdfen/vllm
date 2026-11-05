@@ -7,16 +7,19 @@ set -euo pipefail
 MODEL_DIR=${MODEL_DIR:-/model}
 ENGRAM_DIR=${ENGRAM_DIR:-/engram-src}
 MASTER_PORT=${MASTER_PORT:-29501}
-MAX_MODEL_LEN=${MAX_MODEL_LEN:-2048}
-MAX_NUM_SEQS=${MAX_NUM_SEQS:-1}
-MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-${MAX_MODEL_LEN}}
-GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.90}
+MAX_MODEL_LEN=${MAX_MODEL_LEN:-524288}
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-8}
+MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-2048}
+GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.82}
 MIN_CUDA_FREE_GIB=${MIN_CUDA_FREE_GIB:-110}
 API_PORT=${API_PORT:-8000}
 KV_BLOCK_SIZE=${KV_BLOCK_SIZE:-64}
 SPEC_METHOD=${SPEC_METHOD:-none}
 DSPARK_TOKENS=${DSPARK_TOKENS:-3}
+DSPARK_DRAFT_SAMPLE_METHOD=${DSPARK_DRAFT_SAMPLE_METHOD:-probabilistic}
+CUDAGRAPH_MODE=${CUDAGRAPH_MODE:-FULL_AND_PIECEWISE}
 CUDAGRAPH_CAPTURE_SIZES=${CUDAGRAPH_CAPTURE_SIZES:-"1 2 3 4 6 8 12 18 24"}
+MM_IMAGE_LIMIT=${MM_IMAGE_LIMIT:-20}
 ENABLE_AUTO_TOOL_CHOICE=${ENABLE_AUTO_TOOL_CHOICE:-1}
 TOOL_CALL_PARSER=${TOOL_CALL_PARSER:-deepseek_v41}
 REASONING_PARSER=${REASONING_PARSER:-deepseek_v41}
@@ -52,20 +55,30 @@ python3 /opt/vllm-exl3/tp2_preflight.py \
   --min-cuda-free-gib "${MIN_CUDA_FREE_GIB}"
 
 extra_args=()
-if [[ "${ENFORCE_EAGER:-1}" == "1" ]]; then
+if [[ "${ENFORCE_EAGER:-0}" == "1" ]]; then
   extra_args+=(--enforce-eager)
 else
   # Keep capture bounded to the author-validated small decode batches.  The
   # default inferred list can reserve materially more unified memory on GB10.
   read -r -a capture_sizes <<< "${CUDAGRAPH_CAPTURE_SIZES}"
-  extra_args+=(--cudagraph-capture-sizes "${capture_sizes[@]}")
+  extra_args+=(
+    --compilation-config "{\"cudagraph_mode\":\"${CUDAGRAPH_MODE}\"}"
+    --cudagraph-capture-sizes "${capture_sizes[@]}"
+  )
 fi
 
 if [[ "${SPEC_METHOD}" == "dspark" ]]; then
   # DeepSeek V4.1 embeds its DSpark drafter in the checkpoint.  k=3 is the
   # author's measured throughput sweet spot; dspark_block_size=5 is only the
   # checkpoint ceiling and should not be copied as the runtime setting.
-  extra_args+=(--speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":${DSPARK_TOKENS}}")
+  extra_args+=(--speculative-config "{\"method\":\"dspark\",\"num_speculative_tokens\":${DSPARK_TOKENS},\"draft_sample_method\":\"${DSPARK_DRAFT_SAMPLE_METHOD}\"}")
+  if [[ "${DSPARK_DRAFT_SAMPLE_METHOD}" == "probabilistic" ]]; then
+    # Probabilistic drafting materializes full draft logits.  The author's
+    # local-argmax feature head is a greedy-only path and must not be loaded.
+    export VLLM_DSPARK_LOCAL_ARGMAX=0
+    export VLLM_DSPARK_DEPTH_POLICY=conf
+    unset VLLM_DSPARK_CONF_FEAT_HEAD
+  fi
 elif [[ "${SPEC_METHOD}" != "none" ]]; then
   echo "unsupported SPEC_METHOD=${SPEC_METHOD}; expected none or dspark" >&2
   exit 2
@@ -111,6 +124,7 @@ vllm serve "${MODEL_DIR}" \
   --max-model-len "${MAX_MODEL_LEN}" \
   --max-num-seqs "${MAX_NUM_SEQS}" \
   --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+  --limit-mm-per-prompt "{\"image\":${MM_IMAGE_LIMIT}}" \
   --no-enable-flashinfer-autotune \
   --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
   "${extra_args[@]}" &
