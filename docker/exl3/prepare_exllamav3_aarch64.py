@@ -30,8 +30,12 @@ def main() -> None:
     stub_target = extension / "aarch64_cuda_only.cpp"
     shutil.copyfile(args.stub, stub_target)
     text = setup.read_text(encoding="utf-8")
-    anchor = "print (sources)\n"
-    if anchor not in text:
+    anchors = (
+        "print (sources)\n",
+        "if hip:\n    cuda_flags.use_rocm_sdk_devel(cpp_extension)\n",
+    )
+    anchor = next((value for value in anchors if value in text), None)
+    if anchor is None:
         raise SystemExit("unsupported ExLlamaV3 setup.py: source anchor not found")
     excluded = repr(_EXCLUDED)
     injected = f"""# vLLM EXL3: aarch64 uses CUDA collectives and GPU MoE only.

@@ -1,0 +1,2 @@
+Optional dependency wheel input. The source build wrapper can override this
+stage with a directory of canonical wheels and a verified SHA256SUMS file.

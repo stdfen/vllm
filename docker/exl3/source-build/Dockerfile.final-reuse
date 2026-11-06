@@ -1,0 +1,15 @@
+ARG OFFICIAL_IMAGE
+FROM ${OFFICIAL_IMAGE} AS final-reuse
+ARG SOURCE_SHA
+ARG INPUTS_SHA
+ARG BUILD_STAGE
+LABEL ai.vllm.exl3.stage="${BUILD_STAGE}" \
+      ai.vllm.exl3.source-revision="${SOURCE_SHA}" \
+      ai.vllm.exl3.inputs-sha256="${INPUTS_SHA}"
+RUN --mount=type=bind,source=wheels,target=/inputs \
+    cd /inputs && sha256sum -c SHA256SUMS \
+    && uv pip install --system --no-deps /inputs/*.whl
+COPY run_tp2.sh tp2_preflight.py manifest.py verify-image.py smoke-kernels.py /opt/vllm-exl3/
+COPY sources.lock.json /opt/vllm-exl3/sources.lock.json
+RUN uv venv --system-site-packages /opt/vllm-exl3/.venv \
+    && /opt/vllm-exl3/.venv/bin/python /opt/vllm-exl3/verify-image.py

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "sourceBaseline": "f3e845ca98d32b5646c2671fcf69af4962fe2835",
+  "buildBase": "dockerproxy.net/pytorch/manylinuxaarch64-builder@sha256:f91599c49f526c77d01b68286f2bf943a5fd6a432d7e3f0afcc5784825908fe9",
+  "runtimeBase": "dockerproxy.net/nvidia/cuda@sha256:56d9d8183e2181a20be6b0d3801d1f056a0e75c17706df939ba207b126e1cb9c",
+  "buildkit": "dockerproxy.net/moby/buildkit@sha256:7a9e2a8abc3428a555ade8db975f899241d4f5d242fb5599dedd4a0f97e8fc04",
+  "exllamav3": {
+    "repository": "https://github.com/turboderp-org/exllamav3.git",
+    "version": "1.6.0",
+    "tag": "v1.6.0",
+    "revision": "151539c77abc7ab7425d30da7a4e8e3c5c154e7b",
+    "sourceArchiveSha256": "73cdc89f493d3c28f66a8cc05ec50e8678817c4615314446ac1295c9f0908ba4",
+    "cudaArchitecture": "12.1a",
+    "arm64Patch": "docker/exl3/prepare_exllamav3_aarch64.py",
+    "runtimeWheels": [
+      {
+        "name": "marisa-trie",
+        "version": "1.4.1",
+        "filename": "marisa_trie-1.4.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl",
+        "sha256": "7bed50d39ff1391a67b9383a7f3c458a1a0cb40fe8dd16952f813fbf8939eeff"
+      }
+    ]
+  },
+  "cutlass": {
+    "repository": "https://github.com/NVIDIA/cutlass.git",
+    "tag": "v4.7.1",
+    "revision": "cb4247394dd82148787aed73e5dc7cef33cbf862"
+  },
+  "exl3Moe": {
+    "filename": "vllm_exl3_moe-0.1.0.dev0-py3-none-any.whl",
+    "sha256": "d552307ba4198f2868dfaa6bb046c017c0e12bcd6a03da156f4bc1a3e8cc87fe",
+    "provenance": "Existing deployment wheel; matches installed direct_url.json hash"
+  },
+  "flashinfer": {
+    "pythonVersion": "0.6.18",
+    "cubinVersion": "0.6.18",
+    "jitCacheVersion": "0.6.18+cu130",
+    "artifacts": [
+      {
+        "filename": "flashinfer_cubin-0.6.18-py3-none-any.whl",
+        "size": 1565107227,
+        "sha256": "2dd65c0fcfc6bc44c67f148530de5372979c2e3d260e47935730f94156d4d873"
+      },
+      {
+        "filename": "flashinfer_jit_cache-0.6.18+cu130-cp39-abi3-manylinux_2_28_aarch64.whl",
+        "size": 1130221598,
+        "sha256": "c97664eab2f21a01f6b8d24d10ba33631a1a64b981f788c3f61d81ebbf905970"
+      }
+    ],
+    "provenance": "Official flashinfer.ai PEP503 index SHA256 anchors; full files verified on download and build nodes",
+    "status": "Full architecture wheel SHA256 and offline CLI installation verified"
+  }
+}

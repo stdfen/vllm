@@ -1,0 +1,9 @@
+[worker.oci]
+  max-parallelism = 2
+  gc = true
+  reservedSpace = "20GB"
+  maxUsedSpace = "280GB"
+  minFreeSpace = "80GB"
+
+[registry."docker.io"]
+  mirrors = ["dockerproxy.net"]

@@ -6,6 +6,7 @@
 #include "parallel/all_reduce_cpu_avx512.h"
 
 #include <stdexcept>
+#include <utility>
 
 namespace {
 [[noreturn]] void unsupported() {
@@ -80,6 +81,12 @@ void exl3_moe_cpu_stage_experts(
   unsupported();
 }
 void exl3_moe_cpu_set_prof(bool) {}
+void exl3_moe_cpu_pool_prime(int) { unsupported(); }
+int64_t exl3_moe_cpu_pool_stress(int, int, int, int) { unsupported(); }
+std::pair<std::vector<int64_t>, int64_t> exl3_moe_cpu_core_order() {
+  return {{}, 0};
+}
 bool exl3_moe_cpu_has_avx2() { return false; }
+bool exl3_moe_cpu_has_avx512_bw() { return false; }
 bool exl3_moe_cpu_has_avx512_vnni() { return false; }
 bool exl3_moe_cpu_has_avx512_vbmi() { return false; }

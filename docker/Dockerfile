@@ -75,6 +75,7 @@ ARG PIP_INDEX_URL
 ARG PIP_EXTRA_INDEX_URL
 ARG UV_INDEX_URL=${PIP_INDEX_URL}
 ARG UV_EXTRA_INDEX_URL=${PIP_EXTRA_INDEX_URL}
+ARG UV_INDEX
 
 # PyTorch provides its own indexes for standard and nightly builds
 ARG PYTORCH_CUDA_INDEX_BASE_URL=https://download.pytorch.org/whl
@@ -98,6 +99,31 @@ ARG INSTALL_KV_CONNECTORS=false
 ARG BUILD_NIXL=false
 
 #################### BASE BUILD IMAGE ####################
+FROM scratch AS dependency-wheels
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
+FROM scratch AS flashinfer-wheels
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
+FROM scratch AS rust-toolchain-input
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
+FROM scratch AS cubin-policy-input
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
+# Optional, hash-pinned S3 manifests reviewed against the source reference.
+FROM scratch AS cuda-runtime-policy-input
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
+FROM scratch AS cuda-apt-input
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
+FROM scratch AS cxx-sources
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
+FROM scratch AS native-build-input
+COPY docker/exl3/source-build/empty-wheelhouse/ /
+
 # prepare basic build environment
 FROM ${BUILD_BASE_IMAGE} AS base
 
@@ -111,6 +137,7 @@ ARG SCCACHE_ENDPOINT
 ARG SCCACHE_BUCKET_NAME=vllm-build-sccache
 ARG SCCACHE_REGION_NAME=us-west-2
 ARG SCCACHE_S3_NO_CREDENTIALS=0
+ARG EPEL_BASE_URL
 
 # Environment for uv
 # Declared BEFORE the installer + `uv venv` invocations below so the uv
@@ -131,7 +158,15 @@ ENV VIRTUAL_ENV="/opt/venv"
 
 # Install system dependencies including build tools. The PyTorch manylinux
 # image enables EPEL, which provides ccache.
-RUN dnf install -y --setopt=install_weak_deps=False \
+RUN if [ -n "${EPEL_BASE_URL}" ]; then \
+        awk -v url="${EPEL_BASE_URL}" \
+            '/^\[/ { epel = ($0 == "[epel]"); print; if (epel) print "baseurl=" url; next } \
+             epel && /^(#?baseurl|metalink|mirrorlist)=/ { next } { print }' \
+            /etc/yum.repos.d/epel.repo > /tmp/epel.repo \
+        && cat /tmp/epel.repo > /etc/yum.repos.d/epel.repo \
+        && rm /tmp/epel.repo; \
+    fi \
+    && dnf install -y --setopt=install_weak_deps=False \
         ccache \
         git \
         curl \
@@ -214,8 +249,17 @@ COPY requirements/common.txt requirements/common.txt
 COPY requirements/cuda.txt requirements/cuda.txt
 COPY tools/use_existing_torch.py tools/use_existing_torch.py
 COPY pyproject.toml pyproject.toml
+ARG PIP_INDEX_URL UV_INDEX_URL UV_INDEX
+# Build and runtime stages share wheel downloads; slow ARM64 mirrors may hold
+# a distribution lock longer than uv's default 300-second wait.
+ENV UV_LOCK_TIMEOUT=3600
 RUN --mount=type=cache,target=/opt/uv/cache \
     --mount=type=bind,source=requirements,target=/tmp/vllm-requirements,ro \
+    --mount=type=bind,from=dependency-wheels,target=/opt/dependency-wheels \
+    if [ -f /opt/dependency-wheels/SHA256SUMS ]; then \
+        (cd /opt/dependency-wheels && sha256sum -c SHA256SUMS) \
+        && export UV_FIND_LINKS=/opt/dependency-wheels; \
+    fi && \
     if [ "${INSTALL_RUBIN_PRERELEASE}" = "true" ] && \
         [ ! -f /tmp/vllm-requirements/rubin-prerelease.txt ]; then \
         echo "INSTALL_RUBIN_PRERELEASE=true requires requirements/rubin-prerelease.txt" >&2; \
@@ -313,8 +357,14 @@ ENV SCCACHE_SERVER_PORT=4227
 # inputs. The child stage below relinks the crates that embed the exact version.
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/root/.cargo/git,sharing=locked \
+    --mount=type=bind,from=rust-toolchain-input,target=/opt/rust-toolchain-input \
     --mount=type=secret,id=aws-credentials,target=/root/.aws/credentials,required=false \
-    if [ "$USE_SCCACHE" = "1" ]; then \
+    if [ -f /opt/rust-toolchain-input/SHA256SUMS ]; then \
+        (cd /opt/rust-toolchain-input && sha256sum -c SHA256SUMS) \
+        && tar -xzf /opt/rust-toolchain-input/toolchain.tar.gz -C /root \
+        && export PATH="/root/.cargo/bin:${PATH}" || exit 1; \
+    fi \
+    && if [ "$USE_SCCACHE" = "1" ]; then \
         if [ -n "${SCCACHE_ENDPOINT}" ]; then export SCCACHE_ENDPOINT="${SCCACHE_ENDPOINT}"; fi; \
         export RUSTC_WRAPPER=sccache; \
         sccache --show-stats; \
@@ -326,6 +376,10 @@ RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
 
 # Relink with the exact Git-derived package version.
 FROM rust-build-cache AS rust-build
+
+# build_rust.sh sources Cargo's env only in its own RUN shell. Preserve access
+# to the already installed rustup in this separate relink RUN.
+ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN --mount=type=cache,target=/root/.cargo/registry,sharing=locked \
     --mount=type=cache,target=/root/.cargo/git,sharing=locked \
@@ -416,6 +470,15 @@ ENV DEEPGEMM_VENV_PREFIX=/opt/dgenv
 RUN --mount=type=cache,target=/root/.cache/uv \
     tools/setup_deepgemm_pythons.sh > /tmp/dg_pythons.txt
 
+# Optional verified source checkout; this stage never enters the runtime image.
+COPY --from=cxx-sources / /opt/vendor-src/
+ARG VLLM_CUTLASS_SRC_DIR=""
+ENV VLLM_CUTLASS_SRC_DIR=${VLLM_CUTLASS_SRC_DIR}
+ARG GITHUB_GIT_MIRROR=""
+RUN if [ -n "$GITHUB_GIT_MIRROR" ]; then \
+        git config --global "url.${GITHUB_GIT_MIRROR}.insteadOf" https://github.com/; \
+    fi
+
 # Build the vLLM wheel
 # if USE_SCCACHE is set, use sccache to speed up compilation
 # AWS credentials mounted at ~/.aws/credentials for sccache S3 auth (optional)
@@ -437,12 +500,21 @@ RUN --mount=type=cache,target=/opt/uv/cache \
 ARG vllm_target_device="cuda"
 ENV VLLM_TARGET_DEVICE=${vllm_target_device}
 ENV CCACHE_DIR=/root/.cache/ccache
+ARG native_max_jobs=6
+ENV MAX_JOBS=${native_max_jobs}
 RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/opt/uv/cache \
+    --mount=type=bind,from=native-build-input,target=/opt/native-build-input \
     if [ "$USE_SCCACHE" != "1" ]; then \
-        # Clean any existing CMake artifacts
-        rm -rf .deps && \
-        mkdir -p .deps && \
+        if [ -f /opt/native-build-input/SHA256SUMS ]; then \
+            (cd /opt/native-build-input && sha256sum -c SHA256SUMS) \
+            && tar -xzf /opt/native-build-input/native-state.tar.gz -C /workspace || exit 1; \
+            if [ -f /opt/native-build-input/generated-sources.tar.gz ]; then \
+                tar -xzf /opt/native-build-input/generated-sources.tar.gz -C /workspace || exit 1; \
+            fi; \
+        else \
+            rm -rf .deps && mkdir -p .deps; \
+        fi && \
         export VLLM_USE_PRECOMPILED="${VLLM_USE_PRECOMPILED}" && \
         export VLLM_PRECOMPILED_WHEEL_COMMIT="${VLLM_MERGE_BASE_COMMIT}" && \
         export VLLM_DOCKER_BUILD_CONTEXT=1 && \
@@ -789,8 +861,18 @@ RUN apt-get update -y \
 
 # Install CUDA development tools for runtime JIT compilation
 # (FlashInfer, DeepGEMM, EP kernels all require compilation at runtime)
-RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
+ARG CUDA_STATIC_POLICY_SHA256=""
+RUN --mount=type=bind,from=cuda-runtime-policy-input,target=/opt/cuda-policy \
+    --mount=type=bind,from=cuda-apt-input,target=/opt/cuda-apt-input \
+    --mount=type=bind,from=base,source=/opt/uv/bin/uv,target=/opt/policy-uv \
+    --mount=type=bind,source=docker/exl3/source-build/slim-cuda-runtime.py,target=/opt/slim-cuda-runtime.py \
+    CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
     apt-get update -y && \
+    if [ -f /opt/cuda-apt-input/SHA256SUMS ]; then \
+        (cd /opt/cuda-apt-input && sha256sum -c SHA256SUMS) \
+        && mkdir -p /var/cache/apt/archives \
+        && cp /opt/cuda-apt-input/*.deb /var/cache/apt/archives/; \
+    fi && \
     apt-get install -y --no-install-recommends --allow-change-held-packages \
         cuda-nvcc-${CUDA_VERSION_DASH} \
         cuda-cudart-${CUDA_VERSION_DASH} \
@@ -805,7 +887,18 @@ RUN CUDA_VERSION_DASH=$(echo $CUDA_VERSION | cut -d. -f1,2 | tr '.' '-') && \
         libnuma-dev \
         # numactl CLI for NUMA binding at runtime
         numactl && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    rm -f /var/cache/apt/archives/*.deb && \
+    if [ -n "$CUDA_STATIC_POLICY_SHA256" ]; then \
+        /opt/policy-uv venv --python /usr/bin/python3 /tmp/cuda-policy-venv \
+        && mkdir -p /usr/local/share/vllm-build \
+        && /tmp/cuda-policy-venv/bin/python /opt/slim-cuda-runtime.py \
+            --mode static --apply \
+            --approved-manifest /opt/cuda-policy/static.json \
+            --approved-sha256 "$CUDA_STATIC_POLICY_SHA256" \
+            --output /usr/local/share/vllm-build/cuda-static-prune.json \
+        && rm -rf /tmp/cuda-policy-venv; \
+    fi
 
 # Ensures nvcc/ptxas (installed above, needed at runtime for FlashInfer/
 # DeepGEMM/EP kernel JIT compilation) are reachable on PATH. Harmless no-op
@@ -908,8 +1001,18 @@ ENV VLLM_ENABLE_CUDA_COMPATIBILITY=0
 ARG PYTORCH_CUDA_INDEX_BASE_URL
 COPY requirements/common.txt /tmp/common.txt
 COPY requirements/cuda.txt /tmp/requirements-cuda.txt
+ARG PIP_INDEX_URL UV_INDEX_URL UV_INDEX
+ENV UV_LOCK_TIMEOUT=3600
+ARG CUDA_DEDUPE_POLICY_SHA256=""
 RUN --mount=type=cache,target=/opt/uv/cache \
     --mount=type=bind,source=requirements,target=/tmp/vllm-requirements,ro \
+    --mount=type=bind,from=dependency-wheels,target=/opt/dependency-wheels \
+    --mount=type=bind,from=cuda-runtime-policy-input,target=/opt/cuda-policy \
+    --mount=type=bind,source=docker/exl3/source-build/slim-cuda-runtime.py,target=/opt/slim-cuda-runtime.py \
+    if [ -f /opt/dependency-wheels/SHA256SUMS ]; then \
+        (cd /opt/dependency-wheels && sha256sum -c SHA256SUMS) \
+        && export UV_FIND_LINKS=/opt/dependency-wheels; \
+    fi && \
     if [ "${INSTALL_RUBIN_PRERELEASE}" = "true" ] && \
         [ ! -f /tmp/vllm-requirements/rubin-prerelease.txt ]; then \
         echo "INSTALL_RUBIN_PRERELEASE=true requires requirements/rubin-prerelease.txt" >&2; \
@@ -934,13 +1037,43 @@ RUN --mount=type=cache,target=/opt/uv/cache \
             -r /tmp/requirements-cuda.txt \
             --extra-index-url ${PYTORCH_CUDA_INDEX_BASE_URL}/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d '.'); \
     fi && \
-    rm /tmp/requirements-cuda.txt /tmp/common.txt
+    rm /tmp/requirements-cuda.txt /tmp/common.txt && \
+    if [ -n "$CUDA_DEDUPE_POLICY_SHA256" ]; then \
+        uv venv --python /usr/bin/python3 /tmp/cuda-policy-venv \
+        && mkdir -p /usr/local/share/vllm-build \
+        && /tmp/cuda-policy-venv/bin/python /opt/slim-cuda-runtime.py \
+            --mode dedupe --apply \
+            --approved-manifest /opt/cuda-policy/dedupe.json \
+            --approved-sha256 "$CUDA_DEDUPE_POLICY_SHA256" \
+            --output /usr/local/share/vllm-build/cuda-runtime-dedupe.json \
+        && rm -rf /tmp/cuda-policy-venv; \
+    fi
 
 # Install FlashInfer's precompiled kernels for all GPU architectures (the default).
 # `vllm download-kernels` wraps this command but vLLM is only installed in later
 # stages, and running it there would rebuild this large layer for every wheel.
+ARG CUBIN_POLICY_SHA256=""
 RUN --mount=type=cache,target=/opt/pip/cache \
-    PIP_CACHE_DIR=/opt/pip/cache flashinfer download-kernels
+    --mount=type=bind,from=flashinfer-wheels,target=/opt/flashinfer-wheels \
+    --mount=type=bind,from=cubin-policy-input,target=/opt/cubin-policy \
+    --mount=type=bind,source=docker/exl3/source-build/prune-flashinfer-cubins.py,target=/opt/prune-flashinfer-cubins.py \
+    if [ -f /opt/flashinfer-wheels/SHA256SUMS ]; then \
+        (cd /opt/flashinfer-wheels && sha256sum -c SHA256SUMS) \
+        && PIP_NO_INDEX=1 PIP_FIND_LINKS=/opt/flashinfer-wheels \
+           PIP_CACHE_DIR=/opt/pip/cache flashinfer download-kernels; \
+    else \
+        PIP_CACHE_DIR=/opt/pip/cache flashinfer download-kernels; \
+    fi \
+    && if [ -n "$CUBIN_POLICY_SHA256" ]; then \
+        uv venv --system-site-packages --python /usr/bin/python3 /tmp/fi-policy-venv \
+        && mkdir -p /usr/local/share/vllm-build \
+        && /tmp/fi-policy-venv/bin/python /opt/prune-flashinfer-cubins.py \
+            --root /usr/local/lib/python${PYTHON_VERSION}/dist-packages/flashinfer_cubin/cubins \
+            --allowlist /opt/cubin-policy/flashinfer-cubins.json \
+            --allowlist-sha256 "$CUBIN_POLICY_SHA256" \
+            --report /usr/local/share/vllm-build/flashinfer-cubin-prune.json \
+        && rm -rf /tmp/fi-policy-venv; \
+    fi
 
 # ============================================================
 # OPENAI API SERVER DEPENDENCIES

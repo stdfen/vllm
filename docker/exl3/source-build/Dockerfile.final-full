@@ -1,0 +1,42 @@
+ARG OFFICIAL_IMAGE
+FROM ${OFFICIAL_IMAGE} AS exllama-builder
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ENV TORCH_CUDA_ARCH_LIST=12.1a MAX_JOBS=6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libcusolver-dev-13-0 libcusparse-dev-13-0 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+ARG PIP_INDEX_URL UV_INDEX_URL UV_INDEX
+RUN uv venv --seed --system-site-packages /build/.venv \
+    && uv pip install --python /build/.venv/bin/python build wheel 'setuptools<81' ninja
+ADD exllamav3-source.tar.gz /build/source/
+COPY prepare_exllamav3_aarch64.py exllamav3_aarch64_cuda_only.cpp /build/tools/
+ARG EXLLAMAV3_REVISION
+RUN .venv/bin/python tools/prepare_exllamav3_aarch64.py \
+        /build/source/exllamav3-${EXLLAMAV3_REVISION} \
+        --stub /build/tools/exllamav3_aarch64_cuda_only.cpp \
+    && cd /build/source/exllamav3-${EXLLAMAV3_REVISION} \
+    && /build/.venv/bin/python -m build --wheel --no-isolation --outdir /build/wheels
+
+FROM scratch AS exllama-wheel-export
+COPY --from=exllama-builder /build/wheels/ /
+
+FROM ${OFFICIAL_IMAGE} AS final-full
+ARG SOURCE_SHA
+ARG INPUTS_SHA
+LABEL ai.vllm.exl3.stage="s1-full-reference" \
+      ai.vllm.exl3.source-revision="${SOURCE_SHA}" \
+      ai.vllm.exl3.inputs-sha256="${INPUTS_SHA}"
+RUN --mount=type=bind,from=exllama-builder,source=/build/wheels,target=/wheels \
+    --mount=type=bind,source=runtime-wheels,target=/runtime-wheels \
+    --mount=type=bind,source=vllm_exl3_moe-0.1.0.dev0-py3-none-any.whl,target=/inputs/vllm_exl3_moe-0.1.0.dev0-py3-none-any.whl \
+    --mount=type=bind,source=SHA256SUMS,target=/inputs/SHA256SUMS \
+    cd /inputs && sha256sum -c SHA256SUMS \
+    && (cd /runtime-wheels && sha256sum -c SHA256SUMS) \
+    && uv pip install --system --no-deps /runtime-wheels/*.whl /wheels/*.whl /inputs/vllm_exl3_moe-0.1.0.dev0-py3-none-any.whl
+COPY run_tp2.sh tp2_preflight.py manifest.py /opt/vllm-exl3/
+COPY verify-image.py smoke-kernels.py /opt/vllm-exl3/
+COPY sources.lock.json /opt/vllm-exl3/sources.lock.json
+RUN uv venv --system-site-packages /opt/vllm-exl3/.venv \
+    && /opt/vllm-exl3/.venv/bin/python /opt/vllm-exl3/verify-image.py
