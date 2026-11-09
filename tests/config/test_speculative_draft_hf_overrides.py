@@ -12,7 +12,7 @@ when the target itself is shrunk — which is what kept spec-decode archs like
 """
 
 import functools
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from transformers import Glm5NextConfig, PreTrainedConfig
@@ -50,13 +50,24 @@ def test_none_overrides_fall_back_to_arch_mapping():
 def _make_speculative_config(
     hf_kwargs: dict, architecture: str, **speculative_kwargs
 ) -> SpeculativeConfig:
+    hf_kwargs = dict(hf_kwargs)
+    target_architecture = {
+        "deepseek_v4": "DeepseekV4ForCausalLM",
+        "deepseek_v41": "DeepseekV41ForCausalLM",
+        "gemma4_text": "Gemma4ForCausalLM",
+    }[hf_kwargs["model_type"]]
+    hf_kwargs.setdefault("architectures", [target_architecture])
     hf_config = SpeculativeConfig.hf_config_override(_make_hf_config(**hf_kwargs))
     draft = MagicMock(
         hf_config=hf_config, architectures=hf_config.architectures, max_model_len=128
     )
+    type(draft).architectures = PropertyMock(
+        side_effect=lambda: draft.hf_config.architectures
+    )
     draft.registry.inspect_model_cls.return_value = (None, architecture)
     target = MagicMock(max_model_len=128, quantization=None, hf_overrides={})
     target.hf_config.model_type = hf_kwargs["model_type"]
+    target.architectures = [target_architecture]
 
     with patch("vllm.config.speculative.ModelConfig", return_value=draft):
         return SpeculativeConfig(
@@ -104,6 +115,12 @@ def _make_speculative_config(
 def test_dspark_width_is_independent_of_mtp_stages(
     hf_kwargs, n_predict, architecture, speculative_kwargs
 ):
+    if hf_kwargs["model_type"] == "gemma4_text":
+        with pytest.raises(ValueError, match="not approved"):
+            _make_speculative_config(
+                hf_kwargs, architecture, method="dspark", **speculative_kwargs
+            )
+        return
     config = _make_speculative_config(
         hf_kwargs, architecture, method="dspark", **speculative_kwargs
     )
@@ -173,7 +190,7 @@ def test_arch_mapping_applies_before_callable_override():
 
 
 @pytest.mark.cpu_test
-def test_inkling_override_exposes_all_mtp_depths():
+def test_removed_inkling_nested_config_is_not_rewritten():
     text_config = _make_hf_config(
         architectures=["InklingForCausalLM"],
         model_type="inkling_model",
@@ -189,17 +206,10 @@ def test_inkling_override_exposes_all_mtp_depths():
         },
     )
 
+    before = config.to_dict()
     out = SpeculativeConfig.hf_config_override(config)
-
-    assert out is text_config
-    assert out.model_type == "inkling_mtp"
-    assert out.architectures == ["InklingMTPModel"]
-    # Multi-module MTP: every checkpoint depth is exposed (module i drafts
-    # speculative token i), no longer clamped to the first depth.
-    assert out.n_predict == 8
-    assert out.num_nextn_predict_layers == 8
-    assert out.chain_hidden_post_norm is False
-    assert out.local_layer_ids == [0, 2, 4]
+    assert out is config
+    assert out.to_dict() == before
 
 
 def _module_level_shrink(hf_config: PreTrainedConfig) -> PreTrainedConfig:
@@ -241,6 +251,7 @@ def _make_mtp_speculative_config(
     )
     target_model_config = MagicMock(
         model="target",
+        architectures=["Qwen4ExpForCausalLM"],
         max_model_len=128,
         quantization=None,
         hf_overrides={},
@@ -288,3 +299,114 @@ def test_glm5_next_mtp_override_promotes_index_share():
     assert draft_config.architectures == ["Glm5NextMTPModel"]
     assert draft_config.n_predict == 1
     assert draft_config.index_share_for_mtp_iteration is True
+
+
+@pytest.mark.cpu_test
+@pytest.mark.parametrize(
+    "architecture,accepted",
+    [
+        ("Glm4ForCausalLM", True),
+        ("DeepseekV41ForCausalLM", True),
+        ("Qwen3ForCausalLM", True),
+        ("KimiK3ForConditionalGeneration", True),
+        ("LlamaForCausalLM", False),
+    ],
+)
+def test_ngram_constructor_checks_target_admission(architecture, accepted):
+    """Non-rewriting proposers must run the final target admission check."""
+    from types import SimpleNamespace
+
+    target = SimpleNamespace(
+        architectures=[architecture],
+        max_model_len=128,
+        hf_config=SimpleNamespace(model_type="unused"),
+        verify_with_parallel_config=lambda _: None,
+    )
+
+    def construct():
+        return SpeculativeConfig(
+            method="ngram",
+            num_speculative_tokens=3,
+            target_model_config=target,
+            target_parallel_config=ParallelConfig(),
+        )
+
+    if not accepted:
+        with pytest.raises(ValueError, match="not approved"):
+            construct()
+        return
+    config = construct()
+    assert config.draft_model_config is target
+    assert config.num_speculative_tokens == 3
+    assert config.prompt_lookup_min == config.prompt_lookup_max == 5
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_verifier_architectures_bind_to_target_not_draft(matches):
+    """Verifier identity belongs to the target, not the rewritten draft class."""
+    from types import SimpleNamespace
+
+    target = "Qwen3ForCausalLM"
+    config = SimpleNamespace(
+        target_model_config=SimpleNamespace(architectures=[target]),
+        draft_model_config=SimpleNamespace(
+            architectures=["Eagle3Qwen3ForCausalLM"],
+            hf_config=SimpleNamespace(
+                speculators_verifier={
+                    "architectures": [target if matches else "DeepseekV41ForCausalLM"]
+                }
+            ),
+        ),
+        method="eagle3",
+    )
+    if matches:
+        SpeculativeConfig._validate_four_family_pair(config)
+    else:
+        with pytest.raises(ValueError, match="actual target architectures"):
+            SpeculativeConfig._validate_four_family_pair(config)
+
+
+def test_speculative_target_context_survives_serialization():
+    """Worker configuration retains target identity without reading checkpoint claims."""
+    import pickle
+
+    from vllm.config import ModelConfig
+
+    # Construction is bypassed here only to isolate the configuration transport
+    # contract from checkpoint loading and platform discovery.
+    config = object.__new__(ModelConfig)
+    config.spec_target_architectures = ("Qwen3ForCausalLM",)
+    restored = pickle.loads(pickle.dumps(config))
+    assert restored.spec_target_architectures == ("Qwen3ForCausalLM",)
+
+
+@pytest.mark.parametrize(
+    ("model_type", "architecture"),
+    [
+        ("minimax_m3_vl", "MiniMaxM3SparseForConditionalGeneration"),
+        ("minimax_m3_mtp", "MiniMaxM3MTP"),
+        ("mimo_v2", "MiMoV2ForCausalLM"),
+        ("mimo_v2_omni", "MiMoV2OmniForCausalLM"),
+        ("mimo_v2_flash", "MiMoV2FlashForCausalLM"),
+        ("inkling_model", "InklingForCausalLM"),
+        ("inkling_mm_model", "InklingForConditionalGeneration"),
+    ],
+)
+def test_removed_model_config_is_not_rewritten(model_type, architecture):
+    config = _make_hf_config(model_type=model_type, architectures=[architecture])
+    before = config.to_dict()
+    result = SpeculativeConfig.hf_config_override(config)
+    assert result is config
+    assert result.to_dict() == before
+
+@pytest.mark.cpu_test
+@pytest.mark.parametrize("n_predict", [0, -1])
+@pytest.mark.parametrize("num_tokens", [1, 2])
+def test_mtp_rejects_nonpositive_predict_layers(n_predict, num_tokens):
+    with pytest.raises(ValueError, match="MTP draft requires positive n_predict"):
+        _make_speculative_config(
+            dict(model_type="deepseek_v4", num_nextn_predict_layers=n_predict),
+            "DeepSeekV4MTPModel",
+            method="mtp",
+            **({} if num_tokens is None else {"num_speculative_tokens": num_tokens}),
+        )

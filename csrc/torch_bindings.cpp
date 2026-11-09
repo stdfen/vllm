@@ -501,21 +501,6 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_C, ops) {
       "float eps) -> (Tensor, Tensor)");
 #endif
 
-  // Horizontally-fused MiniMax-M3 QK-norm + partial NeoX RoPE + KV-insert.
-  ops.def(
-      "fused_minimax_m3_qknorm_rope_kv_insert("
-      "Tensor! qkv, Tensor q_norm_weight, Tensor k_norm_weight, "
-      "Tensor cos_sin_cache, Tensor positions, int num_heads, "
-      "int num_kv_heads, int rotary_dim, float eps, "
-      "Tensor? index_q_norm_weight, Tensor? index_k_norm_weight, "
-      "int num_index_heads, "
-      "Tensor? slot_mapping, Tensor? index_slot_mapping, "
-      "Tensor!? kv_cache, Tensor!? index_cache, "
-      "int block_size, Tensor!? q_out, Tensor!? index_q_out, "
-      "str kv_cache_dtype, bool skip_index_branch=False, "
-      "Tensor!? q_fp8_out=None, float q_fp8_scale=1.0, "
-      "Tensor? kv_k_scale=None, Tensor? kv_v_scale=None) -> ()");
-
 #ifdef VLLM_ENABLE_FUSED_KDA_DECODE
   ops.def(
       "fused_kda_decode("
@@ -832,8 +817,6 @@ STABLE_TORCH_LIBRARY_IMPL(_C, CUDA, ops) {
 #ifndef USE_ROCM
   ops.impl("minimax_allreduce_rms_qk", TORCH_BOX(&minimax_allreduce_rms_qk));
 #endif
-  ops.impl("fused_minimax_m3_qknorm_rope_kv_insert",
-           TORCH_BOX(&fused_minimax_m3_qknorm_rope_kv_insert));
 #ifdef VLLM_ENABLE_FUSED_KDA_DECODE
   ops.impl("fused_kda_decode", TORCH_BOX(&fused_kda_decode));
 #endif

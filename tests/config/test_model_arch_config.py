@@ -425,6 +425,29 @@ def test_base_model_arch_config(model: str):
     """Test model architecture config for base models."""
     groundtruth = _load_groundtruth("base_model_arch_groundtruth.json")
     expected = groundtruth[model]
+    excluded_architectures = {
+        "MambaForCausalLM",
+        "Mamba2ForCausalLM",
+        "Zamba2ForCausalLM",
+        "FalconForCausalLM",
+        "Ernie4_5_MoeForCausalLM",
+        "GptOssForCausalLM",
+        "Llama4ForConditionalGeneration",
+        "DeciLMForCausalLM",
+        "MiMoForCausalLM",
+        "LongcatFlashForCausalLM",
+        "Step3p5ForCausalLM",
+        "NemotronHForCausalLM",
+    }
+    if set(expected["architectures"]) & excluded_architectures:
+        from vllm.model_executor.models.registry import ModelRegistry
+
+        for method in ("inspect_model_cls", "resolve_model_cls"):
+            with pytest.raises(ValueError, match="not approved"):
+                getattr(ModelRegistry, method)(
+                    expected["architectures"], SimpleNamespace(model_impl="auto")
+                )
+        return
 
     model_config = ModelConfig(
         model, trust_remote_code=model in BASE_TRUST_REMOTE_CODE_MODELS
@@ -443,6 +466,22 @@ def test_draft_model_arch_config(
     """Test model architecture config for draft/speculative models."""
     groundtruth = _load_groundtruth("draft_model_arch_groundtruth.json")
     expected = groundtruth[draft_model]
+
+    excluded_target_architectures = {
+        "JackFram/llama-68m": "LlamaForCausalLM",
+        "meta-llama/Meta-Llama-3-8B-Instruct": "LlamaForCausalLM",
+        "meta-llama/Llama-3.1-8B-Instruct": "LlamaForCausalLM",
+    }
+    if target_model in excluded_target_architectures:
+        from vllm.model_executor.models.registry import ModelRegistry
+
+        architectures = [excluded_target_architectures[target_model]]
+        for method in ("inspect_model_cls", "resolve_model_cls"):
+            with pytest.raises(ValueError, match="not approved"):
+                getattr(ModelRegistry, method)(
+                    architectures, SimpleNamespace(model_impl="auto")
+                )
+        return
 
     target_model_config = ModelConfig(target_model, trust_remote_code=trust_remote_code)
     speculative_config = SpeculativeConfig(
@@ -515,3 +554,107 @@ def test_diffusion_gemma_head_dims_vary_by_layer_type():
     arch = convertor_cls(hf_config, hf_config.text_config).convert()
 
     assert [arch[i].head_size for i in range(6)] == [16] * 5 + [32]
+
+
+@pytest.mark.parametrize(
+    ("text_config", "expected"),
+    [
+        (SimpleNamespace(), False),
+        (SimpleNamespace(alibi=False), False),
+        (SimpleNamespace(alibi=True), True),
+        (SimpleNamespace(position_encoding_type="alibi"), True),
+        (SimpleNamespace(attn_config={"alibi": True}), True),
+        (SimpleNamespace(attn_config=SimpleNamespace(alibi=True)), True),
+        (SimpleNamespace(attn_config={"alibi": False}), False),
+    ],
+)
+def test_shared_alibi_uses_config_not_removed_architecture(text_config, expected):
+    """Removing Bloom must not remove shared configuration-driven ALiBi."""
+    for architecture in ("Qwen3ForCausalLM", "BloomForCausalLM"):
+        config = SimpleNamespace(
+            hf_text_config=text_config, architectures=[architecture]
+        )
+        assert ModelConfig.uses_alibi.fget(config) is expected
+
+
+def test_four_family_config_registry_excludes_falcon_aliases():
+    """Removed Falcon config aliases must not retain lazy dispatch targets."""
+    from vllm.transformers_utils import configs
+    from vllm.transformers_utils.config import _CONFIG_REGISTRY
+
+    for model_type in ("falcon", "RefinedWeb", "RefinedWebModel"):
+        assert model_type not in _CONFIG_REGISTRY
+        assert model_type not in MODEL_ARCH_CONFIG_CONVERTORS
+    assert "RWConfig" not in configs.__all__
+    with pytest.raises(AttributeError):
+        getattr(configs, "RWConfig")
+    for model_type in ("chatglm", "deepseek_v4", "kimi_linear", "k3_dspark"):
+        assert _CONFIG_REGISTRY[model_type] is not None
+
+
+def test_removed_dots3_config_has_no_dispatch():
+    from vllm.config.vllm import DEFAULT_BREAKABLE_CUDAGRAPH_ARCHITECTURES
+    from vllm.transformers_utils import configs
+    from vllm.transformers_utils.config import _CONFIG_REGISTRY
+
+    assert "dots3_note" not in _CONFIG_REGISTRY
+    with pytest.raises(AttributeError):
+        getattr(configs, "Dots3NoteConfig")
+    for architecture in ("Dots3NoteForCausalLM", "Dots3NoteMTPModel"):
+        assert architecture not in DEFAULT_BREAKABLE_CUDAGRAPH_ARCHITECTURES
+    config = PreTrainedConfig(
+        model_type="dots3_note", architectures=["Dots3NoteForCausalLM"]
+    )
+    assert not ModelArchConfigConvertorBase(config, config).is_deepseek_mla()
+
+
+def test_removed_inkling_config_and_processor_have_no_dispatch():
+    from vllm.config.vllm import DEFAULT_BREAKABLE_CUDAGRAPH_ARCHITECTURES
+    from vllm.transformers_utils import configs, processors
+    from vllm.transformers_utils.config import _CONFIG_REGISTRY
+
+    for model_type in ("inkling_model", "inkling_mm_model"):
+        assert model_type not in _CONFIG_REGISTRY
+    for name in (
+        "InklingModelConfig",
+        "InklingMMConfig",
+        "InklingAudioConfig",
+        "InklingVisionConfig",
+    ):
+        with pytest.raises(AttributeError):
+            getattr(configs, name)
+    for name in (
+        "InklingProcessor",
+        "InklingImageProcessor",
+        "InklingAudioFeatureExtractor",
+    ):
+        with pytest.raises(AttributeError):
+            getattr(processors, name)
+    for architecture in ("InklingForCausalLM", "InklingForConditionalGeneration"):
+        assert architecture not in DEFAULT_BREAKABLE_CUDAGRAPH_ARCHITECTURES
+
+
+@pytest.mark.parametrize(
+    "architecture",
+    [
+        "MambaForCausalLM",
+        "Mamba2ForCausalLM",
+        "Zamba2ForCausalLM",
+        "FalconForCausalLM",
+        "Ernie4_5_MoeForCausalLM",
+        "GptOssForCausalLM",
+        "Llama4ForConditionalGeneration",
+        "DeciLMForCausalLM",
+        "MiMoForCausalLM",
+        "LongcatFlashForCausalLM",
+        "Step3p5ForCausalLM",
+        "NemotronHForCausalLM",
+    ],
+)
+@pytest.mark.parametrize("method", ["inspect_model_cls", "resolve_model_cls"])
+def test_legacy_config_architecture_is_rejected_before_resolution(architecture, method):
+    from vllm.model_executor.models.registry import ModelRegistry
+
+    config = SimpleNamespace(model_impl="auto")
+    with pytest.raises(ValueError, match="not approved"):
+        getattr(ModelRegistry, method)([architecture], config)

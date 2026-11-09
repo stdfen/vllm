@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import copy
 import os
 from dataclasses import fields
 from typing import Any
@@ -56,10 +57,25 @@ class SpeculatorsConfig(PreTrainedConfig):
             )
 
         # Start with transformer layer configuration if present
-        pre_trained_config = config_dict.get("transformer_layer_config", {})
+        pre_trained_config = copy.deepcopy(
+            config_dict.get("transformer_layer_config", {})
+        )
         # Apply anything specific to the supported algorithm
         algo_updater = SUPPORTED_SPECULATORS_TYPES[speculators_model_type]
         algo_updater(config_dict=config_dict, pre_trained_config=pre_trained_config)
+        pre_trained_config.pop("speculators_verifier", None)
+        verifier = config_dict.get("speculators_config", {}).get("verifier")
+        if verifier is not None:
+            if not isinstance(verifier, dict):
+                raise TypeError("speculators verifier must be a dictionary")
+            architectures = verifier.get("architectures", [])
+            if not isinstance(architectures, list) or any(
+                not isinstance(arch, str) for arch in architectures
+            ):
+                raise TypeError(
+                    "speculators verifier architectures must be a list of strings"
+                )
+            pre_trained_config["speculators_verifier"] = copy.deepcopy(verifier)
         return pre_trained_config
 
     @classmethod

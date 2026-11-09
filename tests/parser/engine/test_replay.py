@@ -74,9 +74,8 @@ def _discover_parsers() -> list[_ParserInfo]:
         if cfg.name not in _BUILDERS:
             missing_builders.append(f"{obj.__name__} (config.name={cfg.name!r})")
             continue
-        if cfg.name in ("inkling", "plamo3", "minimax_m3"):
-            # Inkling uses typed structural blocks. PLaMo and MiniMax M3
-            # markers can span several token IDs. None fits this TOOL_END-token
+        if cfg.name == "plamo3":
+            # PLaMo markers can span several token IDs and do not fit this TOOL_END-token
             # harness; their direct and delegating coverage lives in dedicated
             # tests.
             continue
@@ -317,12 +316,7 @@ _TOOL_CALL_SAMPLES = [
     (p.parser_cls, s, p.think_end, p.tool_start)
     for p in _PARSERS
     for s in p.samples
-    if s.expected_tool_calls
-    and s.expected_reasoning
-    # Inkling's typed-block format (structural role/kind tokens, shared
-    # block-end token) doesn't fit the generic reasoning/tool split
-    # below; its filtering modes are covered in test_inkling.py instead.
-    and p.name != "inkling"
+    if s.expected_tool_calls and s.expected_reasoning
 ]
 
 

@@ -96,10 +96,6 @@ _REASONING_PARSERS_TO_REGISTER = {
         "hy_v3_reasoning_parser",
         "HYV3ReasoningParser",
     ),
-    "hy_v4": (
-        "hy_v4_reasoning_parser",
-        "HYV4ReasoningParser",
-    ),
     "kimi_k2": (
         "kimi_k2_reasoning_parser",
         "KimiK2ReasoningParser",
@@ -127,10 +123,6 @@ _REASONING_PARSERS_TO_REGISTER = {
     "minimax_m2_append_think": (
         "minimax_m2_reasoning_parser",
         "MiniMaxM2AppendThinkReasoningParser",
-    ),
-    "minimax_m3": (
-        "minimax_m3_reasoning_parser",
-        "MiniMaxM3ReasoningParser",
     ),
     "mistral": (
         "mistral_reasoning_parser",
@@ -167,10 +159,6 @@ _REASONING_PARSERS_TO_REGISTER = {
     "step3p5": (
         "step3p5_engine_reasoning_parser",
         "Step3p5ParserReasoningAdapter",
-    ),
-    "inkling": (
-        "inkling_reasoning_parser",
-        "InklingParserReasoningAdapter",
     ),
 }
 

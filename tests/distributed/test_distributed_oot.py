@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from tests.plugins_tests.test_oot_registration_online import (
-    run_and_test_dummy_opt_api_server,
+    run_and_test_dummy_qwen3_api_server,
 )
 
 
-def test_distributed_oot(dummy_opt_path: str):
-    run_and_test_dummy_opt_api_server(dummy_opt_path, tp=2)
+def test_distributed_oot(dummy_qwen3_path: str):
+    run_and_test_dummy_qwen3_api_server(dummy_qwen3_path, tp=2)

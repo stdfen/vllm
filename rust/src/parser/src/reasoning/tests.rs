@@ -8,9 +8,8 @@ use vllm_tokenizer::{DecodedText, DynTokenizer, TokenAnchor, TokenAttribution};
 
 use super::{
     CohereCmdReasoningParser, DeepSeekR1ReasoningParser, DelimitedReasoningParser,
-    DelimitedReasoningParserBuilder, KimiReasoningParser, MiniMaxM3ReasoningParser,
-    Qwen3ReasoningParser, ReasoningDelta, ReasoningParser, Result, SeedOssReasoningParser,
-    Step3p5ReasoningParser,
+    DelimitedReasoningParserBuilder, KimiReasoningParser, Qwen3ReasoningParser, ReasoningDelta,
+    ReasoningParser, Result, SeedOssReasoningParser, Step3p5ReasoningParser,
 };
 
 pub(crate) const THINK_START_ID: u32 = 256;
@@ -190,11 +189,6 @@ fn reasoning_parsers_conserve_token_attributions() {
             SEED_THINK_START_ID,
             "seed_oss",
         ),
-        (
-            MiniMaxM3ReasoningParser::create,
-            MM_THINK_START_ID,
-            "minimax_m3",
-        ),
         (Step3p5ReasoningParser::create, THINK_START_ID, "step3p5"),
     ];
 
@@ -211,7 +205,6 @@ fn reasoning_parsers_conserve_token_attributions() {
             "kimi" => "◁/think▷",
             "cohere_cmd" => "<|END_THINKING|>",
             "seed_oss" => "</seed:think>",
-            "minimax_m3" => "</mm:think>",
             _ => "</think>",
         };
         let chunks = attributed_chunks(&[Some("reason"), None, Some(end_marker), Some("answer")]);

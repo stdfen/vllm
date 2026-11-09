@@ -63,7 +63,9 @@ from vllm.model_executor.layers.quantization.utils.quant_utils import (
     kMxfp8Dynamic,
     kMxfp8Static,
 )
-from vllm.model_executor.models.llama4 import Llama4MoE
+from vllm.model_executor.layers.fused_moe.router.custom_routing_router import (
+    topk_sigmoid_routing,
+)
 from vllm.platforms import current_platform
 from vllm.utils.math_utils import next_power_of_2
 from vllm.utils.torch_utils import set_random_seed
@@ -188,7 +190,7 @@ class TestData:
             rotate_weights_for_fi_trtllm_fp8_per_tensor_moe(
                 layer.w13_weight, layer.w2_weight, is_gated
             )
-        layer.custom_routing_function = Llama4MoE.custom_routing_function
+        layer.custom_routing_function = topk_sigmoid_routing
         layer.routing_method_type = RoutingMethodType.Llama4
         layer.renormalize = False
         layer.intermediate_size_per_partition = n
@@ -244,7 +246,7 @@ def test_flashinfer_per_tensor_moe_fp8_no_graph(
         )
 
         score = torch.randn((m, e), device="cuda", dtype=torch.bfloat16)
-        topk_weights, topk_ids = Llama4MoE.custom_routing_function(
+        topk_weights, topk_ids = topk_sigmoid_routing(
             hidden_states=td.hidden_states,
             gating_output=score,
             topk=topk,
@@ -328,7 +330,7 @@ def test_flashinfer_cutlass_moe_fp8_no_graph(
         )
 
         score = torch.randn((m, e), device="cuda", dtype=torch.bfloat16)
-        topk_weights, topk_ids = Llama4MoE.custom_routing_function(
+        topk_weights, topk_ids = topk_sigmoid_routing(
             hidden_states=td.hidden_states,
             gating_output=score,
             topk=topk,

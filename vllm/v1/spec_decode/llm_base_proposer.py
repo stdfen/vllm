@@ -32,7 +32,6 @@ from vllm.model_executor.models import (
 )
 from vllm.model_executor.models.deepseek_eagle3 import Eagle3DeepseekV2ForCausalLM
 from vllm.model_executor.models.interfaces import SupportsMultiModal
-from vllm.model_executor.models.laguna_dflash import DFlashLagunaForCausalLM
 from vllm.model_executor.models.llama_eagle3 import Eagle3LlamaForCausalLM
 from vllm.model_executor.models.qwen3_dflash import DFlashQwen3ForCausalLM
 from vllm.model_executor.models.qwen3_eagle3 import Eagle3Qwen3ForCausalLM
@@ -273,12 +272,6 @@ class SpecDecodeBaseProposer:
                 DeepseekV4ROCMAiterSparseSWAMetadata,
             )
 
-            # MiniMax-M3 sparse (lightning-indexer) attention. The multi-step
-            # drafting machinery is shared code at num_speculative_tokens>1.
-            # this just opts the metadata into the ROCm allowlist.
-            from vllm.models.minimax_m3.common.sparse_attention import (
-                MiniMaxM3SparseMetadata,
-            )
             from vllm.v1.attention.backends.mla.indexer import (
                 DeepseekV32IndexerMetadata,
             )
@@ -294,7 +287,6 @@ class SpecDecodeBaseProposer:
                 DeepseekV4ROCMAiterMLASparseMetadata,
                 DeepseekV4ROCMAiterSparseSWAMetadata,
                 DeepseekV32IndexerMetadata,
-                MiniMaxM3SparseMetadata,
             ]
             # ROCM_AITER_FA is an optional backend
             # We check is_enabled() here to avoid importing the backend module during
@@ -544,7 +536,6 @@ class SpecDecodeBaseProposer:
                     Eagle3DeepseekV2ForCausalLM,
                     DFlashQwen3ForCausalLM,
                     Eagle3Qwen3ForCausalLM,
-                    DFlashLagunaForCausalLM,
                 ),
             )
             target_hidden_states = self.model.combine_hidden_states(

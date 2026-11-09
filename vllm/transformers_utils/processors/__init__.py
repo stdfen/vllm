@@ -26,9 +26,6 @@ __all__ = [
     "MiMoOmniProcessor",
     "MiniCPMOProcessor",
     "MiniCPMVProcessor",
-    "MiniMaxM3VLImageProcessor",
-    "MiniMaxM3VLVideoProcessor",
-    "MiniMaxVLProcessor",
     "MistralCommonPixtralProcessor",
     "MistralCommonVoxtralProcessor",
     "NanoNemotronVLProcessor",
@@ -39,9 +36,6 @@ __all__ = [
     "OvisProcessor",
     "Ovis2_5Processor",
     "Step3VLProcessor",
-    "InklingProcessor",
-    "InklingImageProcessor",
-    "InklingAudioFeatureExtractor",
 ]
 
 _CLASS_TO_MODULE: dict[str, str] = {
@@ -60,9 +54,6 @@ _CLASS_TO_MODULE: dict[str, str] = {
     "MiMoOmniProcessor": "vllm.transformers_utils.processors.mimo_v2_omni",
     "MiniCPMOProcessor": "vllm.transformers_utils.processors.minicpmo",
     "MiniCPMVProcessor": "vllm.transformers_utils.processors.minicpmv",
-    "MiniMaxM3VLImageProcessor": "vllm.transformers_utils.processors.minimax_m3",
-    "MiniMaxM3VLVideoProcessor": "vllm.transformers_utils.processors.minimax_m3",
-    "MiniMaxVLProcessor": "vllm.transformers_utils.processors.minimax_m3",
     "MistralCommonPixtralProcessor": "vllm.transformers_utils.processors.pixtral",
     "MistralCommonVoxtralProcessor": "vllm.transformers_utils.processors.voxtral",
     "Moondream3Processor": "vllm.transformers_utils.processors.moondream3",
@@ -74,9 +65,6 @@ _CLASS_TO_MODULE: dict[str, str] = {
     "OvisProcessor": "vllm.transformers_utils.processors.ovis",
     "Ovis2_5Processor": "vllm.transformers_utils.processors.ovis2_5",
     "Step3VLProcessor": "vllm.transformers_utils.processors.step3_vl",
-    "InklingProcessor": "vllm.transformers_utils.processors.inkling",
-    "InklingImageProcessor": "vllm.transformers_utils.processors.inkling",
-    "InklingAudioFeatureExtractor": "vllm.transformers_utils.processors.inkling",
 }
 
 

@@ -1533,36 +1533,36 @@ def num_gpus_available():
 
 
 temp_dir = tempfile.gettempdir()
-_dummy_opt_path = os.path.join(temp_dir, "dummy_opt")
-_dummy_llava_path = os.path.join(temp_dir, "dummy_llava")
-_dummy_gemma2_embedding_path = os.path.join(temp_dir, "dummy_gemma2_embedding")
+_dummy_qwen3_path = os.path.join(temp_dir, "dummy_qwen3")
+_dummy_qwen_vl_path = os.path.join(temp_dir, "dummy_qwen_vl")
+_dummy_qwen2_embedding_path = os.path.join(temp_dir, "dummy_qwen2_embedding")
 
 
 @pytest.fixture
-def dummy_opt_path():
-    json_path = os.path.join(_dummy_opt_path, "config.json")
-    if not os.path.exists(_dummy_opt_path):
+def dummy_qwen3_path():
+    json_path = os.path.join(_dummy_qwen3_path, "config.json")
+    if not os.path.exists(_dummy_qwen3_path):
         hf_api().snapshot_download(
-            repo_id="facebook/opt-125m",
-            local_dir=_dummy_opt_path,
+            repo_id="Qwen/Qwen3-0.6B",
+            local_dir=_dummy_qwen3_path,
             ignore_patterns=["*.bin", "*.bin.index.json", "*.pt", "*.h5", "*.msgpack"],
         )
         assert os.path.exists(json_path)
         with open(json_path) as f:
             config = json.load(f)
-        config["architectures"] = ["MyOPTForCausalLM"]
+        config["architectures"] = ["Qwen3ForCausalLM"]
         with open(json_path, "w") as f:
             json.dump(config, f)
-    return _dummy_opt_path
+    return _dummy_qwen3_path
 
 
 @pytest.fixture
-def dummy_llava_path():
-    json_path = os.path.join(_dummy_llava_path, "config.json")
-    if not os.path.exists(_dummy_llava_path):
+def dummy_qwen_vl_path():
+    json_path = os.path.join(_dummy_qwen_vl_path, "config.json")
+    if not os.path.exists(_dummy_qwen_vl_path):
         hf_api().snapshot_download(
-            repo_id="llava-hf/llava-1.5-7b-hf",
-            local_dir=_dummy_llava_path,
+            repo_id="Qwen/Qwen2-VL-2B-Instruct",
+            local_dir=_dummy_qwen_vl_path,
             ignore_patterns=[
                 "*.bin",
                 "*.bin.index.json",
@@ -1575,19 +1575,19 @@ def dummy_llava_path():
         assert os.path.exists(json_path)
         with open(json_path) as f:
             config = json.load(f)
-        config["architectures"] = ["MyLlava"]
+        config["architectures"] = ["Qwen2VLForConditionalGeneration"]
         with open(json_path, "w") as f:
             json.dump(config, f)
-    return _dummy_llava_path
+    return _dummy_qwen_vl_path
 
 
 @pytest.fixture
-def dummy_gemma2_embedding_path():
-    json_path = os.path.join(_dummy_gemma2_embedding_path, "config.json")
-    if not os.path.exists(_dummy_gemma2_embedding_path):
+def dummy_qwen2_embedding_path():
+    json_path = os.path.join(_dummy_qwen2_embedding_path, "config.json")
+    if not os.path.exists(_dummy_qwen2_embedding_path):
         hf_api().snapshot_download(
-            repo_id="BAAI/bge-multilingual-gemma2",
-            local_dir=_dummy_gemma2_embedding_path,
+            repo_id="Qwen/Qwen2.5-0.5B",
+            local_dir=_dummy_qwen2_embedding_path,
             ignore_patterns=[
                 "*.bin",
                 "*.bin.index.json",
@@ -1600,10 +1600,10 @@ def dummy_gemma2_embedding_path():
         assert os.path.exists(json_path)
         with open(json_path) as f:
             config = json.load(f)
-        config["architectures"] = ["MyGemma2Embedding"]
+        config["architectures"] = ["Qwen2ForCausalLM"]
         with open(json_path, "w") as f:
             json.dump(config, f)
-    return _dummy_gemma2_embedding_path
+    return _dummy_qwen2_embedding_path
 
 
 # Add the flag `--optional` to allow run tests

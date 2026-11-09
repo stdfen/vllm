@@ -138,8 +138,7 @@ _TOKEN_CLASSIFICATION_MODELS = {
     ),
 }
 
-_SEQUENCE_CLASSIFICATION_MODELS = {
-}
+_SEQUENCE_CLASSIFICATION_MODELS = {}
 
 _MULTIMODAL_MODELS = {
     "DeepseekVLV2ForCausalLM": ("deepseek_vl2", "DeepseekVLV2ForCausalLM"),
@@ -222,7 +221,12 @@ _SPECULATIVE_DECODING_MODELS = {
     ),
     "Qwen3DSparkModel": ("qwen3_dspark", "Qwen3DSparkForCausalLM"),
     "Qwen3OmniDSparkModel": ("qwen3_dspark", "Qwen3DSparkForCausalLM"),
+    "K3DSparkModel": (
+        "vllm.models.kimi_k3.nvidia.dspark_mla",
+        "K3DSparkForCausalLM",
+    ),
     "PEagleDraftModel": ("llama_eagle3", "Eagle3LlamaForCausalLM"),
+    "PeagleLlamaForCausalLM": ("llama_eagle3", "Eagle3LlamaForCausalLM"),
     "Eagle3Qwen2_5vlForCausalLM": ("llama_eagle3", "Eagle3LlamaForCausalLM"),
     "Eagle3Qwen3vlForCausalLM": ("llama_eagle3", "Eagle3LlamaForCausalLM"),
     "Eagle3Qwen3ForCausalLM": ("qwen3_eagle3", "Eagle3Qwen3ForCausalLM"),
@@ -299,10 +303,282 @@ _VLLM_MODELS = {
     **_TRANSFORMERS_BACKEND_MODELS,
 }
 
+# Keep checkpoint admission independent of mutable plugin registrations. Generic
+# Transformers classes are implementation targets, not checkpoint identities.
+_FOUR_FAMILY_ARCHITECTURES = frozenset(_VLLM_MODELS) - frozenset(
+    _TRANSFORMERS_BACKEND_MODELS
+)
+
+
+# A shared drafter identity is not an independently serviceable checkpoint.
+# This pair is evidenced by the upstream PEagle Qwen3-8B configuration.
+_SHARED_DRAFT_TARGETS = {
+    "PeagleLlamaForCausalLM": frozenset({"Qwen3ForCausalLM"}),
+    "PEagleDraftModel": frozenset({"Qwen3ForCausalLM"}),
+    "DFlashDraftModel": frozenset({"Qwen3ForCausalLM"}),
+    "DFlash2DraftModel": frozenset({"Qwen3_5ForConditionalGeneration"}),
+}
+
+# A family may reuse another family's registered implementation when the
+# checkpoint architecture is explicitly evidenced. Kimi-K2.5 EAGLE3 ships a
+# DeepSeek-V3-shaped draft, so only that exact pair is allowed.
+_CROSS_FAMILY_DRAFT_TARGETS = {
+    "Eagle3DeepseekV2ForCausalLM": frozenset({"KimiK25ForConditionalGeneration"}),
+    "Eagle3DeepseekV3ForCausalLM": frozenset({"KimiK25ForConditionalGeneration"}),
+}
+
+
+def _is_target_repacked_eagle_draft(
+    architecture: str, model_config: ModelConfig
+) -> bool:
+    """Admit only a draft identity that its approved target will repack.
+
+    Some Qwen-VL and Kimi EAGLE3 checkpoints expose the intermediate
+    ``LlamaForCausalLMEagle3`` identity before ``EAGLEConfig`` derives the
+    target-dependent draft architecture. This is not a Llama checkpoint
+    admission: the target is still checked independently, and the final draft
+    architecture is checked again after ``update_arch_``.
+    """
+    return (
+        architecture == "LlamaForCausalLMEagle3"
+        and getattr(model_config, "runner", None) == "draft"
+        and getattr(model_config, "speculative_method", None) in ("eagle", "eagle3")
+        and bool(getattr(model_config, "spec_target_architectures", ()))
+    )
+
+
+def _validate_four_family_architectures(
+    architectures: list[str], model_config: ModelConfig
+) -> None:
+    rejected = [
+        arch
+        for arch in architectures
+        if arch not in _FOUR_FAMILY_ARCHITECTURES
+        and not _is_target_repacked_eagle_draft(arch, model_config)
+    ]
+    for arch in architectures:
+        if arch in _SHARED_DRAFT_TARGETS:
+            targets = getattr(model_config, "spec_target_architectures", ())
+            if (
+                getattr(model_config, "runner", None) != "draft"
+                or not targets
+                or not set(targets) <= _SHARED_DRAFT_TARGETS[arch]
+            ):
+                rejected.append(arch)
+    if rejected or model_config.model_impl == "terratorch":
+        raise ValueError(
+            f"Model architectures {architectures} are not approved for this build. "
+            "Supported families: GLM, DeepSeek, Qwen, Kimi. "
+            "Plugin registration does not grant checkpoint admission."
+        )
+
+
 # This variable is used as the args for subprocess.run(). We
 # can modify  this variable to alter the args if needed. e.g.
 # when we use par format to pack things together, sys.executable
 # might not be the target we want to run.
+_FOUR_FAMILY_ARCH_BY_FAMILY = {
+    "GLM": frozenset(
+        {
+            "ChatGLMModel",
+            "GLM4VForCausalLM",
+            "GlmAsrForConditionalGeneration",
+            "Glm4vForConditionalGeneration",
+            "Glm4vMoeForConditionalGeneration",
+            "GlmOcrForConditionalGeneration",
+            "ChatGLMForConditionalGeneration",
+            "GlmForCausalLM",
+            "Glm4ForCausalLM",
+            "Glm4MoeForCausalLM",
+            "Glm4MoeLiteForCausalLM",
+            "GlmMoeDsaForCausalLM",
+            "Glm5NextForCausalLM",
+            "Glm5NextForConditionalGeneration",
+            "Glm4MoeMTPModel",
+            "Glm4MoeLiteMTPModel",
+            "GlmOcrMTPModel",
+            "Glm5NextMTPModel",
+        }
+    ),
+    "DeepSeek": frozenset(
+        {
+            "DeepseekVLV2ForCausalLM",
+            "DeepseekOCRForCausalLM",
+            "DeepseekOCR2ForCausalLM",
+            "DeepseekV4ForConditionalGeneration",
+            "DeepseekForCausalLM",
+            "DeepseekV2ForCausalLM",
+            "DeepseekV3ForCausalLM",
+            "DeepseekV32ForCausalLM",
+            "DeepseekV4ForCausalLM",
+            "DeepseekV41ForCausalLM",
+            "DeepseekV3BidirectionalModel",
+            "DSparkDraftModel",
+            "DSparkV41DraftModel",
+            "DeepSeekMTPModel",
+            "DeepseekV32MTPModel",
+            "DeepSeekV4MTPModel",
+            "EagleDeepSeekMTPModel",
+            "Eagle3DeepseekV2ForCausalLM",
+            "Eagle3DeepseekV3ForCausalLM",
+        }
+    ),
+    "Qwen": frozenset(
+        {
+            "ColQwen3",
+            "OpsColQwen3Model",
+            "ColQwen3_5",
+            "Qwen3VLNemotronEmbedModel",
+            "Qwen2ForRewardModel",
+            "Qwen2ForProcessRewardModel",
+            "Qwen3ASRForcedAlignerForTokenClassification",
+            "Qwen2VLForConditionalGeneration",
+            "Qwen2_5_VLForConditionalGeneration",
+            "Qwen2AudioForConditionalGeneration",
+            "Qwen2_5OmniModel",
+            "Qwen2_5OmniForConditionalGeneration",
+            "Qwen3OmniMoeForConditionalGeneration",
+            "Qwen3ASRForConditionalGeneration",
+            "Qwen3ASRRealtimeGeneration",
+            "Qwen3VLForConditionalGeneration",
+            "Qwen3VLMoeForConditionalGeneration",
+            "Qwen3_5ForConditionalGeneration",
+            "Qwen3_5MoeForConditionalGeneration",
+            "Qwen4ExpForConditionalGeneration",
+            "Qwen3OmniDSparkModel",
+            "Qwen2ForCausalLM",
+            "Qwen2MoeForCausalLM",
+            "Qwen3ForCausalLM",
+            "Qwen3MoeForCausalLM",
+            "Qwen3_5ForCausalLM",
+            "Qwen3_5MoeForCausalLM",
+            "Qwen4ExpForCausalLM",
+            "Qwen3NextForCausalLM",
+            "Qwen2Model",
+            "VoyageQwen3BidirectionalEmbedModel",
+            "Qwen3NextMTP",
+            "Qwen4ExpMTP",
+            "Qwen3_5MTP",
+            "Qwen3_5MoeMTP",
+            "Qwen3DSparkModel",
+            "Eagle3Qwen3ForCausalLM",
+            "PeagleQwen3ForCausalLM",
+            "Eagle3Qwen2_5vlForCausalLM",
+            "Eagle3Qwen3vlForCausalLM",
+        }
+    ),
+    "Kimi": frozenset(
+        {
+            "KimiVLForConditionalGeneration",
+            "KimiK25ForConditionalGeneration",
+            "MoonshotKimiaForCausalLM",
+            "KimiLinearForCausalLM",
+            "KimiK3ForConditionalGeneration",
+            "KimiK3MTPModel",
+            "K3DSparkModel",
+        }
+    ),
+}
+_FOUR_FAMILY_ARCH_TO_FAMILY = {
+    arch: family
+    for family, architectures in _FOUR_FAMILY_ARCH_BY_FAMILY.items()
+    for arch in architectures
+}
+
+
+def _four_family_for_arch(arch: str) -> str | None:
+    """Resolve an explicitly classified, registered target or draft identity."""
+    for table in (
+        _TEXT_GENERATION_MODELS,
+        _EMBEDDING_MODELS,
+        _LATE_INTERACTION_MODELS,
+        _REWARD_MODELS,
+        _TOKEN_CLASSIFICATION_MODELS,
+        _SEQUENCE_CLASSIFICATION_MODELS,
+        _MULTIMODAL_MODELS,
+        _SPECULATIVE_DECODING_MODELS,
+    ):
+        if arch in table:
+            if arch in _FOUR_FAMILY_ARCH_TO_FAMILY:
+                return _FOUR_FAMILY_ARCH_TO_FAMILY[arch]
+            return None
+    return None
+
+
+def validate_four_family_speculation(
+    target_architectures: str | list[str],
+    draft_architectures: str | list[str],
+    *,
+    method: str | None = None,
+) -> None:
+    """Bind a draft to an admitted target and reject cross-family drafts."""
+    targets = (
+        [target_architectures]
+        if isinstance(target_architectures, str)
+        else list(target_architectures)
+    )
+    drafts = (
+        [draft_architectures]
+        if isinstance(draft_architectures, str)
+        else list(draft_architectures)
+    )
+    target_repacked_eagle = (
+        method in ("eagle", "eagle3")
+        and drafts == ["LlamaForCausalLMEagle3"]
+        and bool(targets)
+    )
+    rejected = [
+        arch
+        for arch in targets + drafts
+        if arch not in _FOUR_FAMILY_ARCHITECTURES and not target_repacked_eagle
+    ]
+    families = {_four_family_for_arch(arch) for arch in targets}
+    if not drafts or rejected or len(families) != 1 or None in families:
+        raise ValueError(
+            f"Draft architectures {drafts} are not approved for target {targets}. "
+            "Supported families: GLM, DeepSeek, Qwen, Kimi. "
+            "Draft and target must match one admitted family."
+        )
+    if "DeepseekV41ForCausalLM" in targets and any("MTP" in arch for arch in drafts):
+        raise ValueError(
+            "DeepSeek V4.1 has no classic-MTP draft; use its DSpark checkpoint."
+        )
+    family = families.pop()
+    for arch in drafts:
+        if arch == "LlamaForCausalLMEagle3":
+            # A target-bound repack may still expose this intermediate identity
+            # here; update_arch_ revalidates the served draft architecture.
+            continue
+        if arch == "ExtractHiddenStatesModel":
+            if method == "extract_hidden_states" and drafts == [arch]:
+                continue
+            raise ValueError(
+                "ExtractHiddenStatesModel requires the extract_hidden_states "
+                "method and an admitted target."
+            )
+        if arch in _SHARED_DRAFT_TARGETS:
+            if set(targets) <= _SHARED_DRAFT_TARGETS[arch]:
+                continue
+            raise ValueError(
+                f"Shared draft {arch} is not approved for target {targets}."
+            )
+        cross_family_targets = _CROSS_FAMILY_DRAFT_TARGETS.get(arch)
+        if cross_family_targets is not None:
+            if method in ("eagle", "eagle3") and set(targets) <= cross_family_targets:
+                continue
+            raise ValueError(
+                f"Cross-family draft {arch} is not approved for target {targets}."
+            )
+        expected = _four_family_for_arch(arch)
+        # Shared implementations need their actual target, not a name guess:
+        # Qwen PEagle and Eagle3-VL reuse the generic llama_eagle3 module.
+        if expected != family:
+            raise ValueError(
+                f"Draft architectures {drafts} do not belong to the approved "
+                f"{family} family for target {targets}."
+            )
+
+
 _SUBPROCESS_COMMAND = [sys.executable, "-m", "vllm.model_executor.models.registry"]
 
 _PREVIOUSLY_SUPPORTED_MODELS = {
@@ -810,6 +1086,12 @@ class _ModelRegistry:
     ) -> str:
         if architecture in self.models:
             return architecture
+        if _is_target_repacked_eagle_draft(architecture, model_config):
+            # The checkpoint's intermediate EAGLE identity selects the family
+            # implementation; EAGLEConfig replaces the served draft architecture.
+            for candidate in ("PeagleLlamaForCausalLM", "Eagle3Qwen2_5vlForCausalLM"):
+                if candidate in self.models:
+                    return candidate
 
         # This may be called in order to resolve runner_type and convert_type
         # in the first place, in which case we consider the default match
@@ -838,6 +1120,7 @@ class _ModelRegistry:
             architectures = [architectures]
         if not architectures:
             raise ValueError("No model architectures are specified")
+        _validate_four_family_architectures(architectures, model_config)
 
         # Require transformers impl
         if model_config.model_impl == "transformers":
@@ -891,6 +1174,7 @@ class _ModelRegistry:
             architectures = [architectures]
         if not architectures:
             raise ValueError("No model architectures are specified")
+        _validate_four_family_architectures(architectures, model_config)
 
         # Require transformers impl
         if model_config.model_impl == "transformers":

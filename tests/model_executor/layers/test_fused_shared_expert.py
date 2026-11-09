@@ -32,9 +32,7 @@ from vllm.model_executor.models.qwen3_next import (
 )
 from vllm.model_executor.models.utils import PPMissingLayer
 from vllm.models.deepseek_v4 import quant_config as deepseek_v4_quant_config
-from vllm.models.minimax_m3.amd import model as minimax_m3_model
 from vllm.platforms import current_platform
-from vllm.transformers_utils.configs.minimax_m3 import MiniMaxM3TextConfig
 
 pytestmark = pytest.mark.skipif(
     current_platform.is_xpu(),
@@ -154,23 +152,6 @@ def get_fse_test_model_config(
     quantization_config: dict[str, Any],
 ) -> tuple[object, type[nn.Module]]:
     config: object
-    if model_type == "minimax_m3":
-        config = MiniMaxM3TextConfig(
-            hidden_size=128,
-            intermediate_size=32,
-            dense_intermediate_size=32,
-            num_hidden_layers=2,
-            num_attention_heads=1,
-            num_key_value_heads=1,
-            head_dim=128,
-            num_local_experts=2,
-            num_experts_per_tok=1,
-            moe_layer_freq=[0, 1],
-            sparse_attention_config=None,
-            rotary_dim=64,
-            quantization_config=quantization_config,
-        )
-        return config, minimax_m3_model.MiniMaxM3Model
     if model_type == "deepseek_v4":
         from vllm.models.deepseek_v4.amd.model import DeepseekV4Model
 
@@ -828,7 +809,7 @@ def test_is_model_fused_shared_expert_compatible() -> None:
 
 @pytest.mark.parametrize(
     "model_type",
-    ["minimax_m3", "deepseek_v4", "qwen3_5", "glm4_moe", "deepseek_v2", "glm5_next"],
+    ["deepseek_v4", "qwen3_5", "glm4_moe", "deepseek_v2", "glm5_next"],
 )
 @pytest.mark.parametrize(
     ("use_fse", "exclude"),
@@ -900,8 +881,6 @@ def test_models_fse_init(
         from vllm.models.deepseek_v4.amd import model as deepseek_v4_model
 
         warning_logger = deepseek_v4_model.logger
-    elif model_type == "minimax_m3":
-        warning_logger = minimax_m3_model.logger
     else:
         warning_logger = fused_moe_utils.logger
 
@@ -920,9 +899,7 @@ def test_models_fse_init(
         aiter_fse_enabled = bool(rocm_aiter_ops.is_fusion_moe_shared_experts_enabled())
         # These AMD-specific models currently use the raw environment flag.
         # and do not rely on `rocm_aiter_ops.is_fusion_moe_shared_experts_enabled()`.
-        fse_enabled = use_fse and (
-            aiter_fse_enabled or model_type in {"deepseek_v4", "minimax_m3"}
-        )
+        fse_enabled = use_fse and (aiter_fse_enabled or model_type == "deepseek_v4")
 
         with (
             patch.object(warning_logger, "warning") as warning,

@@ -102,10 +102,6 @@ _TOOL_PARSERS_TO_REGISTER = {
         "hy_v3_tool_parser",
         "HYV3ToolParser",
     ),
-    "hy_v4": (
-        "hy_v4_tool_parser",
-        "HYV4ToolParser",
-    ),
     "internlm": (
         "internlm2_tool_parser",
         "Internlm2ToolParser",
@@ -153,10 +149,6 @@ _TOOL_PARSERS_TO_REGISTER = {
     "minimax_m2": (
         "minimax_m2_tool_parser",
         "MinimaxM2ToolParser",
-    ),
-    "minimax_m3": (
-        "minimax_m3_tool_parser",
-        "MinimaxM3ToolParser",
     ),
     "minicpm5": (
         "minicpm5xml_tool_parser",
@@ -216,10 +208,6 @@ _TOOL_PARSERS_TO_REGISTER = {
     "step3p5": (
         "step3p5_tool_parser",
         "Step3p5ToolParser",
-    ),
-    "inkling": (
-        "inkling_tool_parser",
-        "InklingEngineToolParser",
     ),
     "xlam": (
         "xlam_tool_parser",

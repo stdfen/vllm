@@ -26,8 +26,6 @@ pub enum RendererSelection {
     DeepSeekV41,
     /// Force the GPT-OSS Harmony renderer.
     Harmony,
-    /// Force the Inkling native token renderer.
-    Inkling,
     /// Force the Kimi K3 XTML renderer.
     KimiK3,
 }
@@ -40,8 +38,6 @@ impl RendererSelection {
     pub const GPT_OSS_MODEL_TYPE: &str = "gpt_oss";
     pub const HARMONY_LITERAL: &str = "harmony";
     pub const HF_LITERAL: &str = "hf";
-    pub const INKLING_LITERAL: &str = "inkling";
-    pub const INKLING_MODEL_TYPE: &str = "inkling_mm_model";
     pub const KIMI_K3_LITERAL: &str = "kimi_k3";
 
     /// Resolve the renderer selection using the given model type string, if
@@ -53,7 +49,6 @@ impl RendererSelection {
                 Self::DEEPSEEK_V4_LITERAL => Self::DeepSeekV4,
                 Self::DEEPSEEK_V41_LITERAL => Self::DeepSeekV41,
                 Self::GPT_OSS_MODEL_TYPE => Self::Harmony,
-                Self::INKLING_MODEL_TYPE => Self::Inkling,
                 Self::KIMI_K3_LITERAL => Self::KimiK3,
                 _ => Self::Hf,
             },
@@ -78,8 +73,6 @@ impl FromStr for RendererSelection {
             Ok(Self::DeepSeekV41)
         } else if value.eq_ignore_ascii_case(Self::HARMONY_LITERAL) {
             Ok(Self::Harmony)
-        } else if value.eq_ignore_ascii_case(Self::INKLING_LITERAL) {
-            Ok(Self::Inkling)
         } else if value.eq_ignore_ascii_case(Self::KIMI_K3_LITERAL) {
             Ok(Self::KimiK3)
         } else {
@@ -100,7 +93,6 @@ impl fmt::Display for RendererSelection {
             Self::DeepSeekV4 => f.write_str(Self::DEEPSEEK_V4_LITERAL),
             Self::DeepSeekV41 => f.write_str(Self::DEEPSEEK_V41_LITERAL),
             Self::Harmony => f.write_str(Self::HARMONY_LITERAL),
-            Self::Inkling => f.write_str(Self::INKLING_LITERAL),
             Self::KimiK3 => f.write_str(Self::KIMI_K3_LITERAL),
         }
     }
@@ -113,6 +105,15 @@ mod tests {
     use strum::IntoEnumIterator;
 
     use super::RendererSelection;
+
+    #[test]
+    fn removed_inkling_renderer_is_not_selectable() {
+        assert!(RendererSelection::from_str("inkling").is_err());
+        assert_eq!(
+            RendererSelection::Auto.resolve("inkling_mm_model"),
+            RendererSelection::Hf
+        );
+    }
 
     #[test]
     fn renderer_selection_display_round_trips() {
@@ -128,7 +129,7 @@ mod tests {
     fn renderer_selection_expected_error_message() {
         let err = RendererSelection::from_str("unknown").unwrap_err();
         expect_test::expect![
-            "unknown renderer `unknown` (expected one of: auto, hf, deepseek_v32, deepseek_v4, deepseek_v41, harmony, inkling, kimi_k3)"
+            "unknown renderer `unknown` (expected one of: auto, hf, deepseek_v32, deepseek_v4, deepseek_v41, harmony, kimi_k3)"
         ]
         .assert_eq(&err);
     }

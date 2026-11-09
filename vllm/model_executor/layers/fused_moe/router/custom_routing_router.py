@@ -7,6 +7,39 @@ import torch
 from vllm.distributed.eplb.eplb_state import EplbLayerState
 from vllm.model_executor.layers.fused_moe.config import RoutingMethodType
 from vllm.model_executor.layers.fused_moe.router.base_router import BaseRouter
+from vllm.platforms import current_platform
+
+
+@torch.compile(backend=current_platform.simple_compile_backend)
+def token_choice_with_bias(
+    hidden_states: torch.Tensor,
+    gating_output: torch.Tensor,
+    topk: int,
+    renormalize: bool,
+):
+    """Sigmoid -> top-k (-> renormalize) custom routing for Cohere2Moe."""
+    assert hidden_states.shape[0] == gating_output.shape[0], "Number of tokens mismatch"
+
+    scores = gating_output.float().sigmoid()
+    topk_weights, topk_ids = torch.topk(scores, k=topk, dim=-1, sorted=False)
+
+    if renormalize:
+        topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
+
+    return topk_weights.to(torch.float32), topk_ids.to(torch.int32)
+
+
+def topk_sigmoid_routing(
+    hidden_states: torch.Tensor,
+    gating_output: torch.Tensor,
+    topk: int,
+    renormalize: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    from vllm.model_executor.models.utils import fast_topk
+
+    router_scores, router_indices = fast_topk(gating_output, topk, dim=-1)
+    router_scores = torch.sigmoid(router_scores.float())
+    return router_scores, router_indices.to(torch.int32)
 
 
 class CustomRoutingRouter(BaseRouter):
@@ -30,11 +63,8 @@ class CustomRoutingRouter(BaseRouter):
 
     @property
     def routing_method_type(self) -> RoutingMethodType:
-        from vllm.model_executor.models.cohere2_moe import token_choice_with_bias
-        from vllm.model_executor.models.llama4 import Llama4MoE
-
         # NOTE: FLASHINFER_TRTLLM support the Llama4 router.
-        if self.custom_routing_function == Llama4MoE.custom_routing_function:
+        if self.custom_routing_function == topk_sigmoid_routing:
             return RoutingMethodType.Llama4
         # Cohere MoE uses sigmoid -> top-k, optionally followed by renormalize.
         if self.custom_routing_function == token_choice_with_bias:

@@ -24,7 +24,6 @@ mod delimited;
 mod glm45;
 mod hy;
 mod kimi;
-mod minimax_m3;
 mod qwen3;
 mod seed_oss;
 mod step3p5;
@@ -44,7 +43,6 @@ pub(crate) use self::delimited::{
 pub use self::glm45::Glm45ReasoningParser;
 pub(crate) use self::hy::HyReasoningParser;
 pub use self::kimi::KimiReasoningParser;
-pub use self::minimax_m3::MiniMaxM3ReasoningParser;
 pub use self::qwen3::Qwen3ReasoningParser;
 pub use self::seed_oss::SeedOssReasoningParser;
 pub use self::step3p5::Step3p5ReasoningParser;

@@ -1,0 +1,2688 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "AfmoeForCausalLM",
+      "implementation": "vllm.model_executor.models.afmoe:AfmoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "ApertusForCausalLM",
+      "implementation": "vllm.model_executor.models.apertus:ApertusForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "AXK1ForCausalLM",
+      "implementation": "vllm.model_executor.models.AXK1:AXK1ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "BailingMoeForCausalLM",
+      "implementation": "vllm.model_executor.models.bailing_moe:BailingMoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "BailingMoeV2ForCausalLM",
+      "implementation": "vllm.model_executor.models.bailing_moe:BailingMoeV2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "BailingMoeV2_5ForCausalLM",
+      "implementation": "vllm.model_executor.models.bailing_moe_linear:BailingMoeV25ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "BailingMoeV3ForCausalLM",
+      "implementation": "vllm.model_executor.models.bailing_moe_v3:BailingMoeV3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "BloomForCausalLM",
+      "implementation": "vllm.model_executor.models.bloom:BloomForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "CohereForCausalLM",
+      "implementation": "vllm.model_executor.models.commandr:CohereForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Cohere2ForCausalLM",
+      "implementation": "vllm.model_executor.models.commandr:CohereForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Cohere2MoeForCausalLM",
+      "implementation": "vllm.model_executor.models.cohere2_moe:Cohere2MoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "DbrxForCausalLM",
+      "implementation": "vllm.model_executor.models.dbrx:DbrxForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "DeciLMForCausalLM",
+      "implementation": "vllm.model_executor.models.nemotron_nas:DeciLMForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Ernie4_5ForCausalLM",
+      "implementation": "vllm.model_executor.models.ernie45:Ernie4_5ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Ernie4_5_MoeForCausalLM",
+      "implementation": "vllm.model_executor.models.ernie45_moe:Ernie4_5_MoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "ExaoneForCausalLM",
+      "implementation": "vllm.model_executor.models.exaone:ExaoneForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Exaone4ForCausalLM",
+      "implementation": "vllm.model_executor.models.exaone4:Exaone4ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "ExaoneMoeForCausalLM",
+      "implementation": "vllm.model_executor.models.exaone_moe:ExaoneMoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "ExaoneMoEForCausalLM",
+      "implementation": "vllm.model_executor.models.exaone_moe:ExaoneMoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "FalconForCausalLM",
+      "implementation": "vllm.model_executor.models.falcon:FalconForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "FalconMambaForCausalLM",
+      "implementation": "vllm.model_executor.models.mamba:MambaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "FalconH1ForCausalLM",
+      "implementation": "vllm.model_executor.models.falcon_h1:FalconH1ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GemmaForCausalLM",
+      "implementation": "vllm.model_executor.models.gemma:GemmaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Gemma2ForCausalLM",
+      "implementation": "vllm.model_executor.models.gemma2:Gemma2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Gemma3ForCausalLM",
+      "implementation": "vllm.model_executor.models.gemma3:Gemma3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Rnj1ForCausalLM",
+      "implementation": "vllm.model_executor.models.rnj1:Rnj1ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Gemma3nForCausalLM",
+      "implementation": "vllm.model_executor.models.gemma3n:Gemma3nForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Gemma4ForCausalLM",
+      "implementation": "vllm.model_executor.models.gemma4:Gemma4ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GptOssForCausalLM",
+      "implementation": "vllm.model_executor.models.gpt_oss:GptOssForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GPT2LMHeadModel",
+      "implementation": "vllm.model_executor.models.gpt2:GPT2LMHeadModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GPTJForCausalLM",
+      "implementation": "vllm.model_executor.models.gpt_j:GPTJForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GraniteForCausalLM",
+      "implementation": "vllm.model_executor.models.granite:GraniteForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GraniteMoeForCausalLM",
+      "implementation": "vllm.model_executor.models.granitemoe:GraniteMoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GraniteMoeHybridForCausalLM",
+      "implementation": "vllm.model_executor.models.granitemoehybrid:GraniteMoeHybridForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GraniteMoeSharedForCausalLM",
+      "implementation": "vllm.model_executor.models.granitemoeshared:GraniteMoeSharedForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GraniteMoeSWAForCausalLM",
+      "implementation": "vllm.model_executor.models.granitemoeshared:GraniteMoeSharedForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "GraniteSWAForCausalLM",
+      "implementation": "vllm.model_executor.models.granite:GraniteForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "HrmTextForCausalLM",
+      "implementation": "vllm.model_executor.models.hrm_text:HrmTextForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "HYV3ForCausalLM",
+      "implementation": "vllm.model_executor.models.hy_v3:HYV3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "HYV4ForCausalLM",
+      "implementation": "vllm.models.hy_v4:HYV4ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "HCXVisionV2ForCausalLM",
+      "implementation": "vllm.model_executor.models.hyperclovax_vision_v2:HCXVisionV2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "HyperCLOVAXForCausalLM",
+      "implementation": "vllm.model_executor.models.hyperclovax:HyperCLOVAXForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "InternLM2ForCausalLM",
+      "implementation": "vllm.model_executor.models.internlm2:InternLM2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "InternLM3ForCausalLM",
+      "implementation": "vllm.model_executor.models.llama:LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "IQuestCoderForCausalLM",
+      "implementation": "vllm.model_executor.models.llama:LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "IQuestLoopCoderForCausalLM",
+      "implementation": "vllm.model_executor.models.iquest_loopcoder:IQuestLoopCoderForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "JambaForCausalLM",
+      "implementation": "vllm.model_executor.models.jamba:JambaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "K2HorizonForCausalLM",
+      "implementation": "vllm.model_executor.models.k2_horizon:K2HorizonForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Lfm2ForCausalLM",
+      "implementation": "vllm.model_executor.models.lfm2:Lfm2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Lfm2MoeForCausalLM",
+      "implementation": "vllm.model_executor.models.lfm2_moe:Lfm2MoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "LagunaForCausalLM",
+      "implementation": "vllm.model_executor.models.laguna:LagunaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "LlamaForCausalLM",
+      "implementation": "vllm.model_executor.models.llama:LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Llama4ForCausalLM",
+      "implementation": "vllm.model_executor.models.llama4:Llama4ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "LLaMAForCausalLM",
+      "implementation": "vllm.model_executor.models.llama:LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "LongcatFlashForCausalLM",
+      "implementation": "vllm.model_executor.models.longcat_flash:LongcatFlashForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "LongcatFlashNgramForCausalLM",
+      "implementation": "vllm.model_executor.models.longcat_flash_ngram:LongcatFlashNgramForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MambaForCausalLM",
+      "implementation": "vllm.model_executor.models.mamba:MambaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Mamba2ForCausalLM",
+      "implementation": "vllm.model_executor.models.mamba2:Mamba2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MiniCPMForCausalLM",
+      "implementation": "vllm.model_executor.models.minicpm:MiniCPMForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MiniCPM3ForCausalLM",
+      "implementation": "vllm.model_executor.models.minicpm3:MiniCPM3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MiniMaxM2ForCausalLM",
+      "implementation": "vllm.model_executor.models.minimax_m2:MiniMaxM2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MiniMaxM3SparseForCausalLM",
+      "implementation": "vllm.models.minimax_m3:MiniMaxM3SparseForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "InklingForCausalLM",
+      "implementation": "vllm.models.inkling:InklingForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "InklingForConditionalGeneration",
+      "implementation": "vllm.models.inkling:InklingForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Ministral3ForCausalLM",
+      "implementation": "vllm.model_executor.models.mistral:MistralForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MistralForCausalLM",
+      "implementation": "vllm.model_executor.models.mistral:MistralForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MistralLarge3ForCausalLM",
+      "implementation": "vllm.model_executor.models.mistral_large_3:MistralLarge3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MixtralForCausalLM",
+      "implementation": "vllm.model_executor.models.mixtral:MixtralForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MiMoForCausalLM",
+      "implementation": "vllm.model_executor.models.mimo:MiMoForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MiMoV2FlashForCausalLM",
+      "implementation": "vllm.model_executor.models.mimo_v2:MiMoV2FlashForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MiMoV2ForCausalLM",
+      "implementation": "vllm.model_executor.models.mimo_v2:MiMoV2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "NemotronForCausalLM",
+      "implementation": "vllm.model_executor.models.nemotron:NemotronForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "NemotronHForCausalLM",
+      "implementation": "vllm.model_executor.models.nemotron_h:NemotronHForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "NemotronHPuzzleForCausalLM",
+      "implementation": "vllm.model_executor.models.nemotron_h:NemotronHForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "MuseGlimmerForCausalLM",
+      "implementation": "vllm.model_executor.models.muse_glimmer:MuseGlimmerForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "OlmoHybridForCausalLM",
+      "implementation": "vllm.model_executor.models.olmo_hybrid:OlmoHybridForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "OlmoeForCausalLM",
+      "implementation": "vllm.model_executor.models.olmoe:OlmoeForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "OPTForCausalLM",
+      "implementation": "vllm.model_executor.models.opt:OPTForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "OrionForCausalLM",
+      "implementation": "vllm.model_executor.models.orion:OrionForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "PanguEmbeddedForCausalLM",
+      "implementation": "vllm.model_executor.models.openpangu:PanguEmbeddedForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "PanguProMoEV2ForCausalLM",
+      "implementation": "vllm.model_executor.models.openpangu:PanguProMoEV2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "PanguUltraMoEForCausalLM",
+      "implementation": "vllm.model_executor.models.openpangu:PanguUltraMoEForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Param2MoEForCausalLM",
+      "implementation": "vllm.model_executor.models.param2moe:Param2MoEForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Phi3ForCausalLM",
+      "implementation": "vllm.model_executor.models.phi3:Phi3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "PhiMoEForCausalLM",
+      "implementation": "vllm.model_executor.models.phimoe:PhiMoEForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Plamo3ForCausalLM",
+      "implementation": "vllm.model_executor.models.plamo3:Plamo3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "SarvamMoEForCausalLM",
+      "implementation": "vllm.model_executor.models.sarvam:SarvamMoEForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "SarvamMLAForCausalLM",
+      "implementation": "vllm.model_executor.models.sarvam:SarvamMLAForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Step1ForCausalLM",
+      "implementation": "vllm.model_executor.models.step1:Step1ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Step3TextForCausalLM",
+      "implementation": "vllm.model_executor.models.step3_text:Step3TextForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Step3p5ForCausalLM",
+      "implementation": "vllm.model_executor.models.step3p5:Step3p5ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "StableLmForCausalLM",
+      "implementation": "vllm.model_executor.models.stablelm:StablelmForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "SolarForCausalLM",
+      "implementation": "vllm.model_executor.models.solar:SolarForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "TeleChat2ForCausalLM",
+      "implementation": "vllm.model_executor.models.telechat2:TeleChat2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "TeleChat3ForCausalLM",
+      "implementation": "vllm.model_executor.models.llama:LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "TeleFLMForCausalLM",
+      "implementation": "vllm.model_executor.models.teleflm:TeleFLMForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TEXT_GENERATION_MODELS",
+      "architecture": "Zamba2ForCausalLM",
+      "implementation": "vllm.model_executor.models.zamba2:Zamba2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "BertModel",
+      "implementation": "vllm.model_executor.models.bert:BertEmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "BertForMaskedLM",
+      "implementation": "vllm.model_executor.models.bert:BertForMaskedLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "BertSpladeSparseEmbeddingModel",
+      "implementation": "vllm.model_executor.models.bert:BertSpladeSparseEmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "BgeM3EmbeddingModel",
+      "implementation": "vllm.model_executor.models.roberta:BgeM3EmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "DeciLMForCausalLM",
+      "implementation": "vllm.model_executor.models.nemotron_nas:DeciLMForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "Gemma2Model",
+      "implementation": "vllm.model_executor.models.gemma2:Gemma2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "Gemma3TextModel",
+      "implementation": "vllm.model_executor.models.gemma3:Gemma3Model",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "GteModel",
+      "implementation": "vllm.model_executor.models.bert_with_rope:SnowflakeGteNewModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "GteNewModel",
+      "implementation": "vllm.model_executor.models.bert_with_rope:GteNewModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "JinaEmbeddingsV5Model",
+      "implementation": "vllm.model_executor.models.jina:JinaEmbeddingsV5Model",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "LlamaBidirectionalModel",
+      "implementation": "vllm.model_executor.models.llama:LlamaBidirectionalModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "LlamaModel",
+      "implementation": "vllm.model_executor.models.llama:LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "MistralModel",
+      "implementation": "vllm.model_executor.models.llama:LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "ModernBertModel",
+      "implementation": "vllm.model_executor.models.modernbert:ModernBertModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "NomicBertModel",
+      "implementation": "vllm.model_executor.models.bert_with_rope:NomicBertModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "Phi3ForCausalLM",
+      "implementation": "vllm.model_executor.models.phi3:Phi3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "RobertaForMaskedLM",
+      "implementation": "vllm.model_executor.models.roberta:RobertaEmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "RobertaModel",
+      "implementation": "vllm.model_executor.models.roberta:RobertaEmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "TeleChat2ForCausalLM",
+      "implementation": "vllm.model_executor.models.telechat2:TeleChat2ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "XLMRobertaModel",
+      "implementation": "vllm.model_executor.models.roberta:RobertaEmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "CLIPModel",
+      "implementation": "vllm.model_executor.models.clip:CLIPEmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "ColPaliForRetrieval",
+      "implementation": "vllm.model_executor.models.colpali:ColPaliModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "EmbeddingGemma2Model",
+      "implementation": "vllm.model_executor.models.embedding_gemma2:EmbeddingGemma2Model",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "LlamaNemotronVLModel",
+      "implementation": "vllm.model_executor.models.nemotron_vl:LlamaNemotronVLForEmbedding",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "LlavaNextForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.llava_next:LlavaNextForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "Phi3VForCausalLM",
+      "implementation": "vllm.model_executor.models.phi3v:Phi3VForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "SiglipModel",
+      "implementation": "vllm.model_executor.models.siglip:SiglipEmbeddingModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_EMBEDDING_MODELS",
+      "architecture": "Terratorch",
+      "implementation": "vllm.model_executor.models.terratorch:Terratorch",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_LATE_INTERACTION_MODELS",
+      "architecture": "HF_ColBERT",
+      "implementation": "vllm.model_executor.models.colbert:ColBERTModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_LATE_INTERACTION_MODELS",
+      "architecture": "ColBERTModernBertModel",
+      "implementation": "vllm.model_executor.models.colbert:ColBERTModernBertModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_LATE_INTERACTION_MODELS",
+      "architecture": "ColBERTJinaRobertaModel",
+      "implementation": "vllm.model_executor.models.colbert:ColBERTJinaRobertaModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_LATE_INTERACTION_MODELS",
+      "architecture": "ColBERTLfm2Model",
+      "implementation": "vllm.model_executor.models.colbert:ColBERTLfm2Model",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_LATE_INTERACTION_MODELS",
+      "architecture": "JinaForRanking",
+      "implementation": "vllm.model_executor.models.jina:JinaForRanking",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_LATE_INTERACTION_MODELS",
+      "architecture": "ColModernVBertForRetrieval",
+      "implementation": "vllm.model_executor.models.colmodernvbert:ColModernVBertForRetrieval",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_LATE_INTERACTION_MODELS",
+      "architecture": "ColPaliForRetrieval",
+      "implementation": "vllm.model_executor.models.colpali:ColPaliModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_REWARD_MODELS",
+      "architecture": "InternLM2ForRewardModel",
+      "implementation": "vllm.model_executor.models.internlm2:InternLM2ForRewardModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TOKEN_CLASSIFICATION_MODELS",
+      "architecture": "BertForTokenClassification",
+      "implementation": "vllm.model_executor.models.bert:BertForTokenClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TOKEN_CLASSIFICATION_MODELS",
+      "architecture": "ClefOmniForJointSchema",
+      "implementation": "vllm.model_executor.models.clef_omni:ClefOmniForJointSchema",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TOKEN_CLASSIFICATION_MODELS",
+      "architecture": "ModernBertForTokenClassification",
+      "implementation": "vllm.model_executor.models.modernbert:ModernBertForTokenClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TOKEN_CLASSIFICATION_MODELS",
+      "architecture": "OpenAIPrivacyFilterForTokenClassification",
+      "implementation": "vllm.model_executor.models.openai_privacy_filter:OpenAIPrivacyFilterForTokenClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TOKEN_CLASSIFICATION_MODELS",
+      "architecture": "RobertaForTokenClassification",
+      "implementation": "vllm.model_executor.models.roberta:RobertaForTokenClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TOKEN_CLASSIFICATION_MODELS",
+      "architecture": "XLMRobertaForTokenClassification",
+      "implementation": "vllm.model_executor.models.roberta:RobertaForTokenClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "BertForSequenceClassification",
+      "implementation": "vllm.model_executor.models.bert:BertForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "GPT2ForSequenceClassification",
+      "implementation": "vllm.model_executor.models.gpt2:GPT2ForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "GteNewForSequenceClassification",
+      "implementation": "vllm.model_executor.models.bert_with_rope:GteNewForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "JambaForSequenceClassification",
+      "implementation": "vllm.model_executor.models.jamba:JambaForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "LlamaBidirectionalForSequenceClassification",
+      "implementation": "vllm.model_executor.models.llama:LlamaBidirectionalForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "ModernBertForSequenceClassification",
+      "implementation": "vllm.model_executor.models.modernbert:ModernBertForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "RobertaForSequenceClassification",
+      "implementation": "vllm.model_executor.models.roberta:RobertaForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "XLMRobertaForSequenceClassification",
+      "implementation": "vllm.model_executor.models.roberta:RobertaForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "JinaVLForRanking",
+      "implementation": "vllm.model_executor.models.jina_vl:JinaVLForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SEQUENCE_CLASSIFICATION_MODELS",
+      "architecture": "LlamaNemotronVLForSequenceClassification",
+      "implementation": "vllm.model_executor.models.nemotron_vl:LlamaNemotronVLForSequenceClassification",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "AriaForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.aria:AriaForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "AudioFlamingo3ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.audioflamingo3:AudioFlamingo3ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "BagelForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.bagel:BagelForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "BailingMoeV3VLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.bailing_moe_v3_vl:BailingMoeV3VLForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "BeeForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.bee:BeeForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Blip2ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.blip2:Blip2ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Cohere2VisionForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.cohere2_vision:Cohere2VisionForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "CohereCompassForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.cohere_compass:CohereCompassForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Cosmos3ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.cosmos3:Cosmos3ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Cosmos3EdgeForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.cosmos3_edge:Cosmos3EdgeForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Dots3NoteForCausalLM",
+      "implementation": "vllm.models.dots3_note:Dots3NoteForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "UnlimitedOCRForCausalLM",
+      "implementation": "vllm.model_executor.models.unlimited_ocr:UnlimitedOCRForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "DotsOCRForCausalLM",
+      "implementation": "vllm.model_executor.models.dots_ocr:DotsOCRForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Eagle2_5_VLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.eagle2_5_vl:Eagle2_5_VLForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Ernie4_5_VLMoeForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.ernie45_vl:Ernie4_5_VLMoeForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Exaone4_5_ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.exaone4_5:Exaone4_5_ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "FireRedASR2ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.fireredasr2:FireRedASR2ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "FunASRForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.funasr:FunASRForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "FunAudioChatForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.funaudiochat:FunAudioChatForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Gemma3ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.gemma3_mm:Gemma3ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Gemma3nForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.gemma3n_mm:Gemma3nForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "DiffusionGemmaForBlockDiffusion",
+      "implementation": "vllm.model_executor.models.diffusion_gemma:DiffusionGemmaForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Gemma4ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.gemma4_mm:Gemma4ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Gemma4UnifiedForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.gemma4_unified:Gemma4UnifiedForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "GraniteSpeechForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.granite_speech:GraniteSpeechForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "GraniteSpeechPlusForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.granite_speech_plus:GraniteSpeechPlusForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Granite4VisionForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.granite4_vision:Granite4VisionForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "H2OVLChatModel",
+      "implementation": "vllm.model_executor.models.h2ovl:H2OVLChatModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "InternVLChatModel",
+      "implementation": "vllm.model_executor.models.internvl:InternVLChatModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "InternS1ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.interns1:InternS1ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "InternVLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.interns1:InternS1ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "InternS1ProForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.interns1_pro:InternS1ProForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "InternS2MobiusForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.interns2_mobius:InternS2MobiusForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "InternS2PreviewForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.interns2_preview:InternS2PreviewForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Idefics3ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.idefics3:Idefics3ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "IsaacForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.isaac:IsaacForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "KananaVForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.kanana_v:KananaVForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "KeyeForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.keye:KeyeForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "KeyeVL1_5ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.keye_vl1_5:KeyeVL1_5ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MossTranscribeDiarizeForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.moss_transcribe_diarize:MossTranscribeDiarizeForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "LightOnOCRForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.lightonocr:LightOnOCRForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Lfm2VlForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.lfm2_vl:Lfm2VLForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Llama4ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.mllama4:Llama4ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Llama_Nemotron_Nano_VL",
+      "implementation": "vllm.model_executor.models.nemotron_vl:LlamaNemotronVLChatModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "LlavaForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.llava:LlavaForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "LlavaNextForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.llava_next:LlavaNextForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "LlavaNextVideoForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.llava_next_video:LlavaNextVideoForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "LlavaOnevisionForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.llava_onevision:LlavaOnevisionForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "LlavaOnevision2ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.llava_onevision2:LlavaOnevision2ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MiDashengLMModel",
+      "implementation": "vllm.model_executor.models.midashenglm:MiDashengLMModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MiMoV2OmniForCausalLM",
+      "implementation": "vllm.model_executor.models.mimo_v2_omni:MiMoV2OmniForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MiniMaxM3SparseForConditionalGeneration",
+      "implementation": "vllm.models.minimax_m3:MiniMaxM3SparseForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MiniCPMO",
+      "implementation": "vllm.model_executor.models.minicpmo:MiniCPMO",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MiniCPMV",
+      "implementation": "vllm.model_executor.models.minicpmv:MiniCPMV",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MiniCPMV4_6ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.minicpmv4_6:MiniCPMV4_6ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MiniCPMV4_7ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.minicpmv4_7:MiniCPMV4_7ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Mistral3ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.mistral3:Mistral3ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MolmoForCausalLM",
+      "implementation": "vllm.model_executor.models.molmo:MolmoForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Molmo2ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.molmo2:Molmo2ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Moondream3ForCausalLM",
+      "implementation": "vllm.model_executor.models.moondream3:Moondream3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MossAudioModel",
+      "implementation": "vllm.model_executor.models.moss_audio:MossAudioModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "HfMoondream",
+      "implementation": "vllm.model_executor.models.moondream3:Moondream3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "NemotronH_Nano_VL_V2",
+      "implementation": "vllm.model_executor.models.nano_nemotron_vl:NemotronH_Nano_VL_V2",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "NemotronH_Nano_Omni_Reasoning_V3",
+      "implementation": "vllm.model_executor.models.nano_nemotron_vl:NemotronH_Nano_VL_V2",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "NemotronH_Super_Omni_Reasoning_V3",
+      "implementation": "vllm.model_executor.models.nano_nemotron_vl:NemotronH_Nano_VL_V2",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "NemotronH_Omni_Reasoning_V3",
+      "implementation": "vllm.model_executor.models.nano_nemotron_vl:NemotronH_Nano_VL_V2",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "NVLM_D",
+      "implementation": "vllm.model_executor.models.nvlm_d:NVLM_D_Model",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "MuseGlimmerForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.muse_glimmer:MuseGlimmerForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "OpenCUAForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.opencua:OpenCUAForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "OpenPanguVLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.openpangu_vl:OpenPanguVLForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "OpenVLAForActionPrediction",
+      "implementation": "vllm.model_executor.models.openvla:OpenVLAForActionPrediction",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Ovis",
+      "implementation": "vllm.model_executor.models.ovis:Ovis",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Ovis2_5",
+      "implementation": "vllm.model_executor.models.ovis2_5:Ovis2_5",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Ovis2_6ForCausalLM",
+      "implementation": "vllm.model_executor.models.ovis2_5:Ovis2_5",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Ovis2_6_MoeForCausalLM",
+      "implementation": "vllm.model_executor.models.ovis2_5:Ovis2_5",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "PaddleOCRVLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.paddleocr_vl:PaddleOCRVLForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "PaliGemmaForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.paligemma:PaliGemmaForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Phi3VForCausalLM",
+      "implementation": "vllm.model_executor.models.phi3v:Phi3VForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Phi4ForCausalLMV",
+      "implementation": "vllm.model_executor.models.phi4siglip:Phi4ForCausalLMV",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Phi4MMForCausalLM",
+      "implementation": "vllm.model_executor.models.phi4mm:Phi4MMForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "PixtralForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.pixtral:PixtralForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "QianfanOCRForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.qianfan_ocr:QianfanOCRForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "RForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.rvl:RForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "SkyworkR1VChatModel",
+      "implementation": "vllm.model_executor.models.skyworkr1v:SkyworkR1VChatModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "SmolVLMForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.smolvlm:SmolVLMForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "StepVLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.step_vl:StepVLForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Step3VLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.step3_vl:Step3VLForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "Step3p7ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.step3p7:Step3p7ForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "UltravoxModel",
+      "implementation": "vllm.model_executor.models.ultravox:UltravoxModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "VoxtralForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.voxtral:VoxtralForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "VoxtralRealtimeGeneration",
+      "implementation": "vllm.model_executor.models.voxtral_realtime:VoxtralRealtimeGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "CohereAsrForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.cohere_asr:CohereAsrForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "NemotronParseForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.nemotron_parse:NemotronParseForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_MULTIMODAL_MODELS",
+      "architecture": "WhisperForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.whisper:WhisperForConditionalGeneration",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "MiMoMTPModel",
+      "implementation": "vllm.model_executor.models.mimo_mtp:MiMoMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "MiMoV2MTPModel",
+      "implementation": "vllm.model_executor.models.mimo_v2_mtp:MiMoV2MTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "MiMoV2OmniMTPModel",
+      "implementation": "vllm.model_executor.models.mimo_v2_mtp:MiMoV2OmniMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "EagleCohereForCausalLM",
+      "implementation": "vllm.model_executor.models.cohere_eagle:EagleCohereForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "EagleLlamaForCausalLM",
+      "implementation": "vllm.model_executor.models.llama_eagle:EagleLlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "EagleLlama4ForCausalLM",
+      "implementation": "vllm.model_executor.models.llama4_eagle:EagleLlama4ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "EagleMiniCPMForCausalLM",
+      "implementation": "vllm.model_executor.models.minicpm_eagle:EagleMiniCPMForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "LiLiCorrDraftModel",
+      "implementation": "vllm.model_executor.models.lilicorr:LiLiCorrForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "MuseGlimmerAssistantModel",
+      "implementation": "vllm.model_executor.models.qwen3_dflash:DFlashQwen3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "DFlashMuseGlimmerAssistantModel",
+      "implementation": "vllm.model_executor.models.qwen3_dflash:DFlashQwen3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "DFlashLagunaForCausalLM",
+      "implementation": "vllm.model_executor.models.laguna_dflash:DFlashLagunaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "Gemma4DSparkModel",
+      "implementation": "vllm.model_executor.models.gemma4_dspark:Gemma4DSparkForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "Eagle3LlamaForCausalLM",
+      "implementation": "vllm.model_executor.models.llama_eagle3:Eagle3LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "Eagle3MiniMaxM2ForCausalLM",
+      "implementation": "vllm.model_executor.models.llama_eagle3:Eagle3LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "LlamaForCausalLMEagle3",
+      "implementation": "vllm.model_executor.models.llama_eagle3:Eagle3LlamaForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "EagleMistralForCausalLM",
+      "implementation": "vllm.model_executor.models.mistral_eagle:EagleMistralForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "EagleMistralLarge3ForCausalLM",
+      "implementation": "vllm.model_executor.models.mistral_large_3_eagle:EagleMistralLarge3ForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "Dots3NoteMTPModel",
+      "implementation": "vllm.models.dots3_note:Dots3NoteMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "BailingMoeV3MTPModel",
+      "implementation": "vllm.model_executor.models.bailing_moe_v3_mtp:BailingMoeV3MTPModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "MiniMaxM3MTP",
+      "implementation": "vllm.models.minimax_m3:MiniMaxM3MTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "BailingMoeV25MTPModel",
+      "implementation": "vllm.model_executor.models.bailing_moe_mtp:BailingMoeV25MTPModel",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "InklingMTPModel",
+      "implementation": "vllm.models.inkling:InklingMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "Gemma4MTPModel",
+      "implementation": "vllm.model_executor.models.gemma4_mtp:Gemma4MTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "ErnieMTPModel",
+      "implementation": "vllm.model_executor.models.ernie_mtp:ErnieMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "ExaoneMoeMTP",
+      "implementation": "vllm.model_executor.models.exaone_moe_mtp:ExaoneMoeMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "Exaone4_5_MTP",
+      "implementation": "vllm.model_executor.models.exaone4_5_mtp:Exaone4_5_MTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "NemotronHMTPModel",
+      "implementation": "vllm.model_executor.models.nemotron_h_mtp:NemotronHMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "LongCatFlashMTPModel",
+      "implementation": "vllm.model_executor.models.longcat_flash_mtp:LongCatFlashMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "MedusaModel",
+      "implementation": "vllm.model_executor.models.medusa:Medusa",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "OpenPanguMTPModel",
+      "implementation": "vllm.model_executor.models.openpangu_mtp:OpenPanguMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "Step3p5MTP",
+      "implementation": "vllm.model_executor.models.step3p5_mtp:Step3p5MTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "InternS2MobiusMTP",
+      "implementation": "vllm.model_executor.models.interns2_mobius:InternS2MobiusMTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "HYV3MTPModel",
+      "implementation": "vllm.model_executor.models.hy_v3_mtp:HYV3MTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_SPECULATIVE_DECODING_MODELS",
+      "architecture": "HYV4MTPModel",
+      "implementation": "vllm.models.hy_v4:HYV4MTP",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "ArceeForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "CwmForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "FlexOlmoForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersMoEForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "GPTBigCodeForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "GPTNeoXForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "HunYuanDenseV1ForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "HunYuanMoEV1ForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersMoEForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "Jais2ForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "MellumForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersMoEForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "NanbeigeForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "OlmoForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "Olmo2ForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "Olmo3ForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "PhiForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "SeedOssForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "SmolLM3ForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "Starcoder2ForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "VaultGemmaForCausalLM",
+      "implementation": "vllm.model_executor.models.transformers:TransformersForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "Emu3ForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.transformers:TransformersMultiModalForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "HunYuanVLForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.transformers:TransformersMultiModalForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    },
+    {
+      "registry": "_TRANSFORMERS_SUPPORTED_MODELS",
+      "architecture": "VibeVoiceAsrForConditionalGeneration",
+      "implementation": "vllm.model_executor.models.transformers:TransformersMultiModalForCausalLM",
+      "batch": "A1",
+      "expected_error": "ValueError before model import/load after A2",
+      "shared_implementation": "pending dependency audit",
+      "verification": "registration removed; admission pending"
+    }
+  ],
+  "status": "pending-A2-validation"
+}

@@ -125,17 +125,6 @@ class AttentionBackendEnum(Enum, metaclass=_AttentionBackendEnumMeta):
     FLASH_ATTN_MLA_SPARSE = (
         "vllm.v1.attention.backends.mla.flashattn_mla_sparse.FlashAttnMLASparseBackend"
     )
-    MINIMAX_M3_SPARSE = (
-        "vllm.models.minimax_m3.common.sparse_attention.MiniMaxM3SparseBackend"
-    )
-    CUTLASS_MSA = (
-        "vllm.models.minimax_m3.nvidia.sparse_attention_msa."
-        "MiniMaxM3SparseCutlassBackend"
-    )
-    TRITON_MSA = (
-        "vllm.models.minimax_m3.nvidia.sparse_attention_msa."
-        "MiniMaxM3SparseTritonBackend"
-    )
     NO_ATTENTION = "vllm.v1.attention.backends.no_attention.NoAttentionBackend"
     FLEX_ATTENTION = "vllm.v1.attention.backends.flex_attention.FlexAttentionBackend"
     # HPC Attention Backend:

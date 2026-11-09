@@ -319,3 +319,11 @@ def test_register_backend_with_string_name_decorator(_enum_is_mamba):
     assert member.get_class().get_name() == "DECORATED"
     member.clear_override()
     _remove_dynamic_member(enum_cls, member)
+
+
+@pytest.mark.parametrize("backend", ["MINIMAX_M3_SPARSE", "CUTLASS_MSA", "TRITON_MSA"])
+def test_removed_minimax_backend_is_rejected(backend):
+    from vllm.config import AttentionConfig
+
+    with pytest.raises(ValueError, match="Unknown attention backend"):
+        AttentionConfig(backend=backend)

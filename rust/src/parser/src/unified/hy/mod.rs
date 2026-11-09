@@ -2,10 +2,8 @@
 // SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 mod hy_v3;
-mod hy_v4;
 
 pub use hy_v3::HyV3UnifiedParser;
-pub use hy_v4::HyV4UnifiedParser;
 
 const HY_MARKER_STEMS: &[&str] = &[
     "think",

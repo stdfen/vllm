@@ -321,7 +321,6 @@ class ModelArchConfigConvertorBase:
             "deepseek_v32",
             "deepseek_v4",
             "deepseek_v41",
-            "dots3_note",
             "deepseek_mtp",
             "k3_dspark",
             "glm5_next",
@@ -337,8 +336,6 @@ class ModelArchConfigConvertorBase:
             "bailing_hybrid",
             "bailing_hybrid_mtp",
             "bailing_hybrid_v3_mtp",
-            "hy_v4",
-            "hy_v4_mtp",
         ):
             # check is deepseek_v4 model
             if hasattr(self.hf_text_config, "compress_ratios"):
@@ -532,25 +529,6 @@ class Zamba2ModelArchConfigConvertor(ModelArchConfigConvertorBase):
         return getattr(self.hf_text_config, "attention_head_dim", 0)
 
 
-class FalconModelArchConfigConvertor(ModelArchConfigConvertorBase):
-    def get_total_num_kv_heads(self) -> int:
-        # NOTE: for falcon, when new_decoder_architecture is True, the
-        # multi_query flag is ignored and we use n_head_kv for the number of
-        # KV heads.
-        new_decoder_arch_falcon = getattr(
-            self.hf_text_config, "new_decoder_architecture", False
-        )
-
-        if not new_decoder_arch_falcon and getattr(
-            self.hf_text_config, "multi_query", False
-        ):
-            # Multi-query attention, only one KV head.
-            return 1
-
-        # Use the base implementation which checks n_head_kv, num_kv_heads, etc.
-        return super().get_total_num_kv_heads()
-
-
 class DbrxModelArchConfigConvertor(ModelArchConfigConvertorBase):
     def get_total_num_kv_heads(self) -> int:
         return getattr(
@@ -670,25 +648,6 @@ class Qwen3OmniMoeModelArchConfigConvertor(ModelArchConfigConvertorBase):
                     "joint_head_config.json", model_path, revision
                 )
         super().__init__(hf_config, hf_text_config, revision)
-
-
-class MimoV2MTPModelArchConfigConvertor(ModelArchConfigConvertorBase):
-    def __init__(
-        self,
-        hf_config: PreTrainedConfig,
-        hf_text_config: PreTrainedConfig,
-        revision: str | None = None,
-    ):
-        super().__init__(hf_config, hf_text_config, revision)
-        _strip_mimo_v2_attention_chunk_size(hf_config, hf_text_config)
-
-    def get_num_hidden_layers(self) -> int:
-        n = getattr(self.hf_text_config, "num_nextn_predict_layers", None)
-        if n is not None:
-            return n
-        # Fall back to n_predict set by hf_config_override
-        n = getattr(self.hf_text_config, "n_predict", None)
-        return n if n is not None else 0
 
 
 class GLM4MoeMTPModelArchConfigConvertor(ModelArchConfigConvertorBase):
@@ -828,7 +787,6 @@ MODEL_ARCH_CONFIG_CONVERTORS = {
     "diffusion_gemma": Gemma4ModelArchConfigConvertor,
     "diffusion_gemma_text": Gemma4ModelArchConfigConvertor,
     "ernie_mtp": ErnieMTPModelArchConfigConvertor,
-    "falcon": FalconModelArchConfigConvertor,
     "falcon_mamba": MambaModelArchConfigConvertor,
     "gemma4": Gemma4ModelArchConfigConvertor,
     "gemma4_mtp": Gemma4MTPModelArchConfigConvertor,
@@ -844,8 +802,6 @@ MODEL_ARCH_CONFIG_CONVERTORS = {
     "mimo_mtp": MimoMTPModelArchConfigConvertor,
     "mimo_v2": MimoV2ModelArchConfigConvertor,
     "mimo_v2_flash": MimoV2ModelArchConfigConvertor,
-    "mimo_v2_mtp": MimoV2MTPModelArchConfigConvertor,
-    "mimo_v2_omni_mtp": MimoV2MTPModelArchConfigConvertor,
     "moss_audio": MossAudioModelArchConfigConvertor,
     "nemotron-nas": NemotronNasModelArchConfigConvertor,
     "bailing_hybrid_v3_mtp": BailingHybridV3MTPModelArchConfigConvertor,
@@ -854,8 +810,6 @@ MODEL_ARCH_CONFIG_CONVERTORS = {
     "qwen3_omni_moe": Qwen3OmniMoeModelArchConfigConvertor,
     "qwen3_next_mtp": Qwen3NextMTPModelArchConfigConvertor,
     "qwen4_exp_mtp": Qwen4ExpMTPModelArchConfigConvertor,
-    "RefinedWeb": FalconModelArchConfigConvertor,
-    "RefinedWebModel": FalconModelArchConfigConvertor,
     "step3p5_mtp": Step3p5MTPModelArchConfigConvertor,
     "timm_wrapper": TerratorchModelArchConfigConvertor,
     "zamba2": Zamba2ModelArchConfigConvertor,

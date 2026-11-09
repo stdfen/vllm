@@ -164,3 +164,12 @@ def test_cached_tokenizer_from_config_registers_local_config(tmp_path: Path):
         CONFIG_MAPPING._extra_content.pop("qwen3_5_moe", None)
         if registered_config is not None:
             CONFIG_MAPPING._extra_content["qwen3_5_moe"] = registered_config
+
+
+def test_removed_inkling_mode_cannot_load_tokenizer_or_renderer():
+    from vllm.renderers.registry import RENDERER_REGISTRY
+
+    with pytest.raises(ValueError, match="No tokenizer registered"):
+        TokenizerRegistry.load_tokenizer_cls("inkling")
+    with pytest.raises(ValueError, match="No renderer registered"):
+        RENDERER_REGISTRY.load_renderer_cls("inkling")

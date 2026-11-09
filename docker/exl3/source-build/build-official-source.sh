@@ -16,6 +16,13 @@ if [[ $BUILD_STAGE != s1 && -z ${CUBIN_POLICY_INPUT:-} ]]; then
 fi
 SOURCE_SHA=$(git rev-parse HEAD)
 SOURCE_SHORT=${SOURCE_SHA:0:10}
+: "${EXPECTED_SOURCE_SHA:?Set EXPECTED_SOURCE_SHA to the reviewed full commit}"
+: "${ALLOWED_SOURCE_BRANCH:?Set ALLOWED_SOURCE_BRANCH to the reviewed branch}"
+[[ $EXPECTED_SOURCE_SHA =~ ^[0-9a-f]{40}$ ]]
+[[ $SOURCE_SHA == "$EXPECTED_SOURCE_SHA" ]]
+[[ $(git branch --show-current) == "$ALLOWED_SOURCE_BRANCH" ]]
+git diff --quiet HEAD --
+[[ -z $(git ls-files --others --exclude-standard) ]]
 LOCK_FILE="$SOURCE_ROOT/docker/exl3/source-build/sources.lock.json"
 BUILD_BASE=$(jq -er .buildBase "$LOCK_FILE")
 RUNTIME_BASE=$(jq -er .runtimeBase "$LOCK_FILE")
@@ -108,12 +115,15 @@ available_kib=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
 available_disk=$(df -B1 --output=avail "$RUN_ROOT" | tail -1)
 (( available_kib >= 96 * 1024 * 1024 ))
 (( available_disk >= ${MIN_DISK_GIB:-320} * 1024 * 1024 * 1024 ))
-[[ $(git branch --show-current) == feature/v032-sudoingx-v20-gb10-tp2 ]]
+[[ $(git branch --show-current) == "$ALLOWED_SOURCE_BRANCH" ]]
 [[ $(git rev-parse base/v032-dsv41-v36-adapt) == f3e845ca98d32b5646c2671fcf69af4962fe2835 ]]
 
 git diff --binary HEAD > "$RUN_ROOT/manifests/source.patch"
 git status --porcelain=v1 > "$RUN_ROOT/manifests/git-status.txt"
 git describe --tags --always HEAD > "$RUN_ROOT/manifests/scm-version.txt"
+printf 'branch=%s\nexpected_sha=%s\nactual_sha=%s\n' \
+    "$ALLOWED_SOURCE_BRANCH" "$EXPECTED_SOURCE_SHA" "$SOURCE_SHA" \
+    > "$RUN_ROOT/manifests/source-identity.txt"
 cp "$LOCK_FILE" "$RUN_ROOT/manifests/sources.lock.json"
 cp docker/exl3/source-build/build-official-source.sh "$RUN_ROOT/manifests/build-official-source.sh"
 printf '%s\n' "$BUILD_STAGE" > "$RUN_ROOT/manifests/stage.txt"

@@ -29,7 +29,6 @@ _VLLM_RENDERERS = {
     "kimi_k3": ("kimi_k3", "KimiK3Renderer"),
     "mistral": ("mistral", "MistralRenderer"),
     "terratorch": ("terratorch", "TerratorchRenderer"),
-    "inkling": ("inkling", "InklingRenderer"),
 }
 
 

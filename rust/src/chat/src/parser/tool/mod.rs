@@ -9,8 +9,8 @@ pub use vllm_parser::tool::{
     DeepSeekV3ToolParser, DeepSeekV4ToolParser, DeepSeekV31ToolParser, DeepSeekV32ToolParser,
     DeepSeekV41ToolParser, Glm45MoeToolParser, Glm47MoeToolParser, Granite4ToolParser,
     HermesToolParser, Internlm2ToolParser, KimiK2ToolParser, Llama3JsonToolParser, MiMoToolParser,
-    MinimaxM2ToolParser, MinimaxM3ToolParser, MistralToolParser, Phi4MiniJsonToolParser,
-    Qwen3CoderToolParser, Qwen3JsonToolParser, SeedOssToolParser, ToolParser, ToolParserError,
+    MinimaxM2ToolParser, MistralToolParser, Phi4MiniJsonToolParser, Qwen3CoderToolParser,
+    Qwen3JsonToolParser, SeedOssToolParser, ToolParser, ToolParserError,
 };
 
 use crate::parser::ParserFactory;
@@ -35,7 +35,6 @@ pub mod names {
     pub const LLAMA4_JSON: &str = "llama4_json";
     pub const MIMO: &str = "mimo";
     pub const MINIMAX_M2: &str = "minimax_m2";
-    pub const MINIMAX_M3: &str = "minimax_m3";
     pub const MISTRAL: &str = "mistral";
     pub const PHI4_MINI_JSON: &str = "phi4_mini_json";
     pub const QWEN3_CODER: &str = "qwen3_coder";
@@ -82,7 +81,6 @@ impl ToolParserFactory {
             .register_parser::<Llama3JsonToolParser>(names::LLAMA4_JSON)
             .register_parser::<MiMoToolParser>(names::MIMO)
             .register_parser::<MinimaxM2ToolParser>(names::MINIMAX_M2)
-            .register_parser::<MinimaxM3ToolParser>(names::MINIMAX_M3)
             .register_parser::<MistralToolParser>(names::MISTRAL)
             .register_parser::<Phi4MiniJsonToolParser>(names::PHI4_MINI_JSON)
             .register_parser::<Qwen3CoderToolParser>(names::QWEN3_CODER)
@@ -122,8 +120,6 @@ impl ToolParserFactory {
             .register_pattern("glm-4.5", names::GLM45)
             .register_pattern("granite-4", names::GRANITE4)
             .register_pattern("kimi-k2", names::KIMI_K2)
-            .register_pattern("minimax-m3", names::MINIMAX_M3)
-            .register_pattern("mm-m3", names::MINIMAX_M3)
             .register_pattern("minimax", names::MINIMAX_M2)
             .register_pattern("mm-m2", names::MINIMAX_M2)
             .register_pattern("seed-oss", names::SEED_OSS)

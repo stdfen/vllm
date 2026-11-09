@@ -154,3 +154,63 @@ def test_non_speculators_model_passes_user_config_through_unchanged():
     assert model == "fake-org/plain-llama"
     assert tok is None
     assert spec == user_overrides
+
+
+def test_speculators_preserves_verifier_without_mutating_checkpoint():
+    """Drafter layer type is not the target identity; retain verifier separately."""
+    import copy
+
+    from vllm.transformers_utils.configs.speculators import SpeculatorsConfig
+
+    raw = {
+        "speculators_model_type": "peagle",
+        "mask_token_id": 151669,
+        "transformer_layer_config": {"model_type": "llama"},
+        "speculators_config": {
+            "verifier": {"architectures": [], "name_or_path": "Qwen/Qwen3-8B"}
+        },
+    }
+    original = copy.deepcopy(raw)
+    converted = SpeculatorsConfig.extract_transformers_pre_trained_config(raw)
+    assert raw == original
+    assert converted["architectures"] == ["PeagleLlamaForCausalLM"]
+    config = SpeculatorsConfig(**converted)
+    assert config.speculators_verifier == original["speculators_config"]["verifier"]
+    converted["speculators_verifier"]["architectures"].append("Changed")
+    assert raw == original
+
+
+def test_speculators_ignores_layer_verifier_claim():
+    from vllm.transformers_utils.configs.speculators import SpeculatorsConfig
+
+    raw = {
+        "speculators_model_type": "peagle",
+        "mask_token_id": 1,
+        "transformer_layer_config": {
+            "model_type": "llama",
+            "speculators_verifier": {"architectures": ["Qwen3ForCausalLM"]},
+        },
+    }
+    converted = SpeculatorsConfig.extract_transformers_pre_trained_config(raw)
+    assert "speculators_verifier" not in converted
+
+
+def test_speculators_rejects_malformed_verifier_identity():
+    import pytest
+
+    from vllm.transformers_utils.configs.speculators import SpeculatorsConfig
+
+    for verifier in (
+        "Qwen",
+        [],
+        {"architectures": "Qwen3ForCausalLM"},
+        {"architectures": [None]},
+    ):
+        raw = {
+            "speculators_model_type": "peagle",
+            "mask_token_id": 1,
+            "transformer_layer_config": {"model_type": "llama"},
+            "speculators_config": {"verifier": verifier},
+        }
+        with pytest.raises(TypeError, match="speculators verifier"):
+            SpeculatorsConfig.extract_transformers_pre_trained_config(raw)

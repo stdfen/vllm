@@ -13,7 +13,6 @@ pub(crate) mod json;
 mod kimi_k2;
 mod mimo;
 mod minimax_m2;
-mod minimax_m3;
 mod parameters;
 mod qwen_coder;
 mod seed_oss;
@@ -34,7 +33,6 @@ pub use json::{
 pub use kimi_k2::KimiK2ToolParser;
 pub use mimo::MiMoToolParser;
 pub use minimax_m2::MinimaxM2ToolParser;
-pub use minimax_m3::MinimaxM3ToolParser;
 pub(crate) use parameters::{ToolSchemas, convert_integer_text, convert_number_text};
 pub use qwen_coder::Qwen3CoderToolParser;
 pub use seed_oss::SeedOssToolParser;

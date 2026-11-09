@@ -12,25 +12,30 @@ from vllm.multimodal.image import convert_image_mode
 @create_new_process_for_each_test()
 def test_plugin(
     monkeypatch: pytest.MonkeyPatch,
-    dummy_opt_path: str,
+    dummy_qwen3_path: str,
 ):
     with monkeypatch.context() as m:
         m.setenv("VLLM_PLUGINS", "")
 
-        with pytest.raises(ValueError, match="are not supported for now"):
-            LLM(model=dummy_opt_path, load_format="dummy")
+        from vllm import ModelRegistry
+        from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
+        from vllm.config import ModelConfig
+
+        config = ModelConfig(dummy_qwen3_path)
+        model_cls, _ = ModelRegistry.resolve_model_cls(config.architectures, config)
+        assert model_cls is Qwen3ForCausalLM
 
 
 @create_new_process_for_each_test()
 def test_oot_registration_text_generation(
     monkeypatch: pytest.MonkeyPatch,
-    dummy_opt_path: str,
+    dummy_qwen3_path: str,
 ):
     with monkeypatch.context() as m:
         m.setenv("VLLM_PLUGINS", "register_dummy_model")
         prompts = ["Hello, my name is", "The text does not matter"]
         sampling_params = SamplingParams(temperature=0)
-        llm = LLM(model=dummy_opt_path, load_format="dummy")
+        llm = LLM(model=dummy_qwen3_path, load_format="dummy")
         first_token = llm.get_tokenizer().decode(0)
         outputs = llm.generate(prompts, sampling_params)
 
@@ -44,13 +49,16 @@ def test_oot_registration_text_generation(
 @create_new_process_for_each_test()
 def test_oot_registration_embedding(
     monkeypatch: pytest.MonkeyPatch,
-    dummy_gemma2_embedding_path: str,
+    dummy_qwen2_embedding_path: str,
 ):
     with monkeypatch.context() as m:
         m.setenv("VLLM_PLUGINS", "register_dummy_model")
         prompts = ["Hello, my name is", "The text does not matter"]
         llm = LLM(
-            model=dummy_gemma2_embedding_path, load_format="dummy", max_model_len=512
+            model=dummy_qwen2_embedding_path,
+            runner="pooling",
+            load_format="dummy",
+            max_model_len=512,
         )
         outputs = llm.embed(prompts)
 
@@ -64,24 +72,24 @@ image = convert_image_mode(ImageAsset("cherry_blossom").pil_image, "RGB")
 @create_new_process_for_each_test()
 def test_oot_registration_multimodal(
     monkeypatch: pytest.MonkeyPatch,
-    dummy_llava_path: str,
+    dummy_qwen_vl_path: str,
 ):
     with monkeypatch.context() as m:
         m.setenv("VLLM_PLUGINS", "register_dummy_model")
         prompts = [
             {
-                "prompt": "What's in the image?<image>",
+                "prompt": "What's in the image?<|vision_start|><|image_pad|><|vision_end|>",
                 "multi_modal_data": {"image": image},
             },
             {
-                "prompt": "Describe the image<image>",
+                "prompt": "Describe the image<|vision_start|><|image_pad|><|vision_end|>",
                 "multi_modal_data": {"image": image},
             },
         ]
 
         sampling_params = SamplingParams(temperature=0)
         llm = LLM(
-            model=dummy_llava_path,
+            model=dummy_qwen_vl_path,
             load_format="dummy",
             max_num_seqs=1,
             trust_remote_code=True,

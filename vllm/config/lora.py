@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import os
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 import torch
@@ -139,13 +138,3 @@ class LoRAConfig:
             self.lora_dtype = model_config.dtype
         elif isinstance(self.lora_dtype, str):
             self.lora_dtype = getattr(torch, self.lora_dtype)
-
-        architectures = getattr(model_config, "architectures", None) or []
-        is_inkling = any("Inkling" in arch for arch in architectures)
-        if is_inkling and os.environ.get("INKLING_MULTIMEM_AR", "1") != "0":
-            raise ValueError(
-                "Inkling LoRA requires INKLING_MULTIMEM_AR=0: the Lamport "
-                "fused-collective path bypasses the LoRA-wrapped wo_ud and dense "
-                "down_proj layers on decode-sized batches, silently dropping "
-                "their LoRA. Set INKLING_MULTIMEM_AR=0."
-            )

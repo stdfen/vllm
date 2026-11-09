@@ -925,7 +925,7 @@ def test_hisparse_async_admission_requires_full_prompt_host_pages(
     from .utils import create_scheduler, mock_kv
 
     (tmp_path / "config.json").write_text(
-        '{"architectures": ["OPTForCausalLM"], "model_type": "opt"}'
+        '{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}'
     )
     scheduler = create_scheduler(
         model=str(tmp_path),
@@ -966,7 +966,7 @@ def test_hisparse_admitted_async_loads_can_finish_with_nothing_running(tmp_path)
     from .utils import create_scheduler, mock_kv
 
     (tmp_path / "config.json").write_text(
-        '{"architectures": ["OPTForCausalLM"], "model_type": "opt"}'
+        '{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}'
     )
     scheduler = create_scheduler(
         model=str(tmp_path),

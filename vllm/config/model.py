@@ -92,7 +92,6 @@ TokenizerMode = Literal[
     "mistral",
     "deepseek_v32",
     "deepseek_v4",
-    "inkling",
     "kimi_k3",
     "cohere",
 ]
@@ -255,6 +254,17 @@ class ModelConfig:
     - -1 or 'auto' -> Automatically choose the maximum model length that fits in
       GPU memory. This will use the model's maximum context length if it fits,
       otherwise it will find the largest length that can be accommodated."""
+    spec_target_architectures: tuple[str, ...] = ()
+    """Actual target architectures supplied when constructing a speculative draft.
+
+    This context does not independently grant model admission.
+    """
+    speculative_method: str | None = None
+    """Speculative method supplied when constructing a draft model.
+
+    This context is used only to validate target-repacked EAGLE draft
+    identities and does not independently grant checkpoint admission.
+    """
     spec_target_max_model_len: int | None = None
     """Specify the maximum length for spec decoding draft models."""
     quantization: QuantizationMethods | str | None = None
@@ -471,6 +481,7 @@ class ModelConfig:
             "allowed_media_domains",
             "tokenizer_revision",
             "spec_target_max_model_len",
+            "spec_target_architectures",
             "enforce_eager",
             "return_sampling_mask",
             "logprobs_mode",
@@ -749,8 +760,6 @@ class ModelConfig:
                 self.tokenizer_mode = "deepseek_v4"
             elif arch == "DeepseekV41ForCausalLM":
                 self.tokenizer_mode = "deepseek_v41"
-            elif arch in ("InklingForCausalLM", "InklingForConditionalGeneration"):
-                self.tokenizer_mode = "inkling"
 
             if self.tokenizer_mode != "auto":
                 logger.info(
@@ -1953,7 +1962,6 @@ class ModelConfig:
 
         return (
             getattr(cfg, "alibi", False)  # Falcon
-            or "BloomForCausalLM" in self.architectures  # Bloom
             or getattr(cfg, "position_encoding_type", "") == "alibi"  # codellm_1b_alibi
             or (
                 hasattr(cfg, "attn_config")  # MPT

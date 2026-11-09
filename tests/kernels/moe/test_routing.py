@@ -24,7 +24,9 @@ from vllm.model_executor.layers.fused_moe.router.grouped_topk_router import (
 from vllm.model_executor.layers.fused_moe.router.router_factory import (
     create_fused_moe_router,
 )
-from vllm.model_executor.models.llama4 import Llama4MoE
+from vllm.model_executor.layers.fused_moe.router.custom_routing_router import (
+    topk_sigmoid_routing,
+)
 from vllm.platforms import current_platform
 
 
@@ -679,7 +681,7 @@ def test_grouped_topk(
 @pytest.mark.parametrize("global_num_experts", NUM_EXPERTS)
 @pytest.mark.parametrize("renormalize", [False, True])
 @pytest.mark.parametrize("enable_eplb", [False, True])
-@pytest.mark.parametrize("custom_routing_function", [Llama4MoE.custom_routing_function])
+@pytest.mark.parametrize("custom_routing_function", [topk_sigmoid_routing])
 def test_custom(
     m: int,
     k: int,
@@ -1006,3 +1008,48 @@ def test_eplb_map_num_unpadded_tokens(
 
     exp_load = torch.tensor(expected_load, dtype=torch.int32, device="cuda")
     torch.testing.assert_close(load, exp_load)
+
+
+@pytest.mark.parametrize("renormalize", [False, True])
+def test_shared_sigmoid_routing_on_cpu(renormalize):
+    from vllm.model_executor.layers.fused_moe.router.custom_routing_router import (
+        CustomRoutingRouter,
+        token_choice_with_bias,
+    )
+
+    hidden = torch.zeros(2, 4)
+    logits = torch.tensor([[0.1, 2.0, -1.0], [3.0, -2.0, 0.5]])
+    router = CustomRoutingRouter(2, 3, token_choice_with_bias, renormalize=renormalize)
+    expected_method = (
+        RoutingMethodType.SigmoidRenorm if renormalize else RoutingMethodType.Sigmoid
+    )
+    assert router.routing_method_type == expected_method
+    weights, ids = router._compute_routing(hidden, logits, None)
+    expected = logits.sigmoid().gather(1, ids.long())
+    if renormalize:
+        expected /= expected.sum(dim=-1, keepdim=True)
+    torch.testing.assert_close(weights, expected)
+    assert weights.dtype == torch.float32
+    assert ids.dtype == torch.int32
+    assert torch.equal(
+        ids.sort(dim=-1).values, torch.tensor([[0, 1], [0, 2]], dtype=torch.int32)
+    )
+
+
+@pytest.mark.parametrize("topk", [1, 2])
+@pytest.mark.parametrize("renormalize", [False, True])
+def test_shared_topk_sigmoid_routing_on_cpu(topk, renormalize):
+    from vllm.model_executor.layers.fused_moe.router.custom_routing_router import (
+        CustomRoutingRouter,
+        topk_sigmoid_routing,
+    )
+
+    logits = torch.tensor([[0.1, 2.0, -1.0], [3.0, -2.0, 0.5]])
+    router = CustomRoutingRouter(topk, 3, topk_sigmoid_routing, renormalize=renormalize)
+    assert router.routing_method_type == RoutingMethodType.Llama4
+    weights, ids = router._compute_routing(torch.zeros(2, 4), logits, torch.int64)
+    expected_scores, expected_ids = logits.topk(topk, dim=-1)
+    torch.testing.assert_close(weights, expected_scores.sigmoid())
+    assert torch.equal(ids, expected_ids)
+    assert ids.dtype == torch.int64
+    assert topk_sigmoid_routing is topk_sigmoid_routing

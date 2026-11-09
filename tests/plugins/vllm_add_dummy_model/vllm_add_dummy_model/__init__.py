@@ -6,17 +6,17 @@ from vllm import ModelRegistry
 
 def register():
     # Test directly passing the model
-    from .my_opt import MyOPTForCausalLM
+    from .my_qwen3 import MyQwen3ForCausalLM
 
-    if "MyOPTForCausalLM" not in ModelRegistry.get_supported_archs():
-        ModelRegistry.register_model("MyOPTForCausalLM", MyOPTForCausalLM)
+    ModelRegistry.register_model("Qwen3ForCausalLM", MyQwen3ForCausalLM)
 
     # Test passing lazy model
-    if "MyGemma2Embedding" not in ModelRegistry.get_supported_archs():
-        ModelRegistry.register_model(
-            "MyGemma2Embedding",
-            "vllm_add_dummy_model.my_gemma_embedding:MyGemma2Embedding",
-        )
+    ModelRegistry.register_model(
+        "Qwen2ForCausalLM",
+        "vllm_add_dummy_model.my_qwen_embedding:MyQwen2Embedding",
+    )
 
-    if "MyLlava" not in ModelRegistry.get_supported_archs():
-        ModelRegistry.register_model("MyLlava", "vllm_add_dummy_model.my_llava:MyLlava")
+    ModelRegistry.register_model(
+        "Qwen2VLForConditionalGeneration",
+        "vllm_add_dummy_model.my_qwen_vl:MyQwen2VL",
+    )

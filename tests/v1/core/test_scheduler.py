@@ -1861,7 +1861,7 @@ def test_reset_connector_cache_no_connector_is_no_op_success():
 def test_draft_slots_budgeted_per_scheduled_request(tmp_path, monkeypatch):
     monkeypatch.setenv("VLLM_USE_V2_MODEL_RUNNER", "0")
     (tmp_path / "config.json").write_text(
-        '{"architectures": ["OPTForCausalLM"], "model_type": "opt"}'
+        '{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}'
     )
     scheduler = create_scheduler(
         model=str(tmp_path),
@@ -2717,7 +2717,7 @@ def test_has_sync_kv_loads(
     tmp_path,
 ):
     (tmp_path / "config.json").write_text(
-        '{"architectures": ["OPTForCausalLM"], "model_type": "opt"}'
+        '{"architectures": ["Qwen3ForCausalLM"], "model_type": "qwen3"}'
     )
     block_size = 16
     scheduler = create_scheduler(

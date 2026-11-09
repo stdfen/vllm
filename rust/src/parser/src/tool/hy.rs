@@ -21,21 +21,18 @@ use crate::tool::{StructuralTagBuilder, Tool};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HyDialect {
     V3,
-    V4,
 }
 
 impl HyDialect {
     fn separator(self) -> &'static str {
         match self {
             Self::V3 => "\n",
-            Self::V4 => "",
         }
     }
 
     fn label(self) -> &'static str {
         match self {
             Self::V3 => "HY3",
-            Self::V4 => "HY4",
         }
     }
 }
@@ -334,14 +331,6 @@ fn parse_tool_call_body<'i>(
             )
             .parse_next(input)
         }
-        HyDialect::V4 => terminated(
-            alt((
-                seq!(take_until(0.., markers.arg_key_start.as_str()), rest,),
-                rest.map(|name| (name, "")),
-            )),
-            eof,
-        )
-        .parse_next(input),
     }
 }
 
@@ -717,80 +706,6 @@ mod tests {
         let error = parser
             .parse_complete(
                 "<tool_calls><tool_call>get_weather<tool_sep><arg_key>city</arg_key><arg_value>Beijing</tool_call></tool_calls>",
-            )
-            .unwrap_err();
-
-        assert!(error.to_report_string().starts_with("tool parser parsing failed:"));
-    }
-
-    #[test]
-    fn hy_v4_parse_complete_extracts_compact_calls_with_and_without_arguments() {
-        let mut parser = HyToolParser::new(&test_tools(), "", HyDialect::V4);
-        let output = parser
-            .parse_complete(
-                "<tool_calls><tool_call>get_weather<arg_key>city</arg_key><arg_value>Beijing</arg_value><arg_key>date</arg_key><arg_value>2026-03-30</arg_value></tool_call><tool_call>get_current_date</tool_call></tool_calls>",
-            )
-            .unwrap();
-
-        expect![[r#"
-            ToolParserOutput {
-                events: [
-                    ToolCall(
-                        ToolCallDelta {
-                            tool_index: 0,
-                            name: Some(
-                                "get_weather",
-                            ),
-                            arguments: "{\"city\":\"Beijing\",\"date\":\"2026-03-30\"}",
-                        },
-                    ),
-                    ToolCall(
-                        ToolCallDelta {
-                            tool_index: 1,
-                            name: Some(
-                                "get_current_date",
-                            ),
-                            arguments: "{}",
-                        },
-                    ),
-                ],
-            }
-        "#]]
-        .assert_debug_eq(&output);
-    }
-
-    #[test]
-    fn hy_v4_streaming_handles_markers_split_across_chunks() {
-        let input = "prefix<tool_calls><tool_call>get_weather<arg_key>city</arg_key><arg_value>上海</arg_value></tool_call><tool_call>get_current_date</tool_call></tool_calls>";
-        let chunks = split_by_chars(input, 7);
-        let mut parser = HyToolParser::new(&test_tools(), "", HyDialect::V4);
-
-        let output = collect_stream(&mut parser, &chunks);
-
-        assert_eq!(output.normal_text(), "prefix");
-        assert_eq!(output.calls().len(), 2);
-        assert_eq!(parsed_arguments(&output, 0), json!({ "city": "上海" }));
-        assert_eq!(output.calls()[1].name.as_deref(), Some("get_current_date"));
-        assert_eq!(parsed_arguments(&output, 1), json!({}));
-    }
-
-    #[test]
-    fn hy_v4_finish_reports_its_dialect_for_incomplete_calls() {
-        let mut parser = HyToolParser::new(&test_tools(), "", HyDialect::V4);
-        parser.parse_chunk("<tool_calls><tool_call>get_weather").unwrap();
-
-        let error = parser.finish().unwrap_err();
-
-        expect!["tool parser parsing failed: incomplete HY4 tool call"]
-            .assert_eq(&error.to_report_string());
-    }
-
-    #[test]
-    fn hy_v4_malformed_argument_pair_fails_fast() {
-        let mut parser = HyToolParser::new(&test_tools(), "", HyDialect::V4);
-        let error = parser
-            .parse_complete(
-                "<tool_calls><tool_call>get_weather<arg_key>city</arg_key>Beijing</tool_call></tool_calls>",
             )
             .unwrap_err();
 

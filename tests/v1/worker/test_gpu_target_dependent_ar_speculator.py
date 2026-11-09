@@ -11,7 +11,6 @@ import torch
 from vllm.config.compilation import CUDAGraphMode
 from vllm.model_executor.models import supports_multimodal_embeddings
 from vllm.model_executor.models.exaone4_5_mtp import Exaone4_5_MTP
-from vllm.model_executor.models.llama4_eagle import EagleLlama4ForCausalLM
 from vllm.model_executor.models.llama_eagle3 import Eagle3LlamaForCausalLM
 from vllm.model_executor.models.mistral_eagle import EagleMistralForCausalLM
 from vllm.model_executor.models.mistral_large_3_eagle import (
@@ -329,7 +328,6 @@ def test_multi_module_mm_support_configured_after_model_load(monkeypatch):
 @pytest.mark.parametrize(
     ("model_cls", "expected"),
     [
-        (EagleLlama4ForCausalLM, True),
         (EagleMistralForCausalLM, True),
         (EagleMistralLarge3ForCausalLM, True),
         (Exaone4_5_MTP, True),
@@ -340,9 +338,7 @@ def test_draft_model_multimodal_embedding_capability(model_cls, expected):
     assert supports_multimodal_embeddings(model_cls) is expected
 
 
-@pytest.mark.parametrize(
-    "model_cls", [EagleLlama4ForCausalLM, EagleMistralLarge3ForCausalLM]
-)
+@pytest.mark.parametrize("model_cls", [EagleMistralLarge3ForCausalLM])
 def test_mm_capable_drafter_merges_multimodal_embeddings(model_cls):
     """Drafters advertising multimodal embeddings must embed text ids and
     scatter the multimodal embeddings themselves; they do not inherit

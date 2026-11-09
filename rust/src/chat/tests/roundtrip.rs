@@ -260,25 +260,6 @@ impl RoundtripCase {
         }
     }
 
-    /// MiniMax M3 invoke format with `<mm:think>` reasoning tags.
-    fn minimax_m3() -> Self {
-        Self {
-            model_id: "MiniMaxAI/MiniMax-M3",
-            assistant_stop_suffix: "[e~[\n",
-            tool_call_parser: ParserSelection::Auto,
-            reasoning_parser: ParserSelection::Auto,
-            thinking_behavior: ThinkingBehavior::Always { value: true },
-            json_fmt: compact_json_fmt(),
-            sort_json_keys: false,
-            // The MiniMax M3 tool parser builds no tool grammar, so the schema
-            // excludes the calls.
-            with_schema: &[
-                ToolCallMixVariant::NoneSchema,
-                ToolCallMixVariant::AutoSchemaContent,
-            ],
-        }
-    }
-
     /// DeepSeek V4 DSML tool-call format.
     fn deepseek_v4() -> Self {
         Self {
@@ -503,19 +484,6 @@ impl RoundtripCase {
         }
     }
 
-    /// Inkling typed content blocks with native token-id rendering.
-    fn inkling() -> Self {
-        Self {
-            model_id: "thinkingmachines/Inkling",
-            assistant_stop_suffix: "<|content_model_end_sampling|>",
-            tool_call_parser: ParserSelection::Auto,
-            reasoning_parser: ParserSelection::Auto,
-            thinking_behavior: ThinkingBehavior::Always { value: true },
-            json_fmt: compact_json_fmt(),
-            sort_json_keys: true,
-            with_schema: ToolCallMixVariant::WITH_SCHEMA,
-        }
-    }
 }
 
 macro_rules! roundtrip_tests {
@@ -543,7 +511,6 @@ roundtrip_tests! {
     qwen35 => [reasoning_and_content, tool_call_mix],
     mimo_v26 => [reasoning_and_content, tool_call_mix],
     minimax_m25 => [reasoning_and_content, tool_call_mix],
-    minimax_m3 => [reasoning_and_content, tool_call_mix],
     deepseek_v4 => [reasoning_and_content, tool_call_mix],
     deepseek_v41 => [reasoning_and_content, tool_call_mix],
     deepseek_v32 => [tool_call_mix],
@@ -562,7 +529,6 @@ roundtrip_tests! {
     // and exercises both stages of the tokenizer-derived unified parser.
     hy_v3 => [tool_call_mix],
     gpt_oss => [tool_call_mix], // Harmony strips reasoning in history if there's no tool call
-    inkling => [reasoning_and_content, tool_call_mix],
 }
 
 /// Run the fixed reasoning+content fixture for one model/parser case.

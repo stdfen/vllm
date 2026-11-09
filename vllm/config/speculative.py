@@ -37,9 +37,7 @@ logger = init_logger(__name__)
 
 MTPModelTypes = Literal[
     "deepseek_mtp",
-    "dots3_note_mtp",
     "mimo_mtp",
-    "mimo_v2_mtp",
     "glm4_moe_mtp",
     "glm4_moe_lite_mtp",
     "glm_ocr_mtp",
@@ -52,16 +50,13 @@ MTPModelTypes = Literal[
     "qwen3_5_mtp",
     "longcat_flash_mtp",
     "bailing_hybrid_v3_mtp",
-    "minimax_m3_mtp",
     "bailing_hybrid_mtp",
     "mtp",
     "kimi_k3_mtp",
     "pangu_ultra_moe_mtp",
     "step3p5_mtp",
     "hy_v3_mtp",
-    "hy_v4_mtp",
     "gemma4_mtp",
-    "inkling_mtp",
     "glm5_next_mtp",
 ]
 NgramGPUTypes = Literal["ngram_gpu"]
@@ -661,21 +656,6 @@ class SpeculativeConfig:
     def hf_config_override(hf_config: PreTrainedConfig) -> PreTrainedConfig:
         initial_architecture = hf_config.architectures[0]
         use_v32_mtp = hf_config.model_type in ("deepseek_v32", "glm_moe_dsa")
-        if hf_config.model_type == "dots3_note":
-            n_predict = getattr(hf_config, "num_nextn_predict_layers", 1)
-            mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
-            if mtp_layer_types is None:
-                mtp_layer_types = ["sliding_attention"] * n_predict
-            if len(mtp_layer_types) != n_predict:
-                raise ValueError(
-                    "mtp_layer_types must have one entry per MTP layer: "
-                    f"got {len(mtp_layer_types)} for {n_predict} layers"
-                )
-            hf_config.layer_types = [*hf_config.layer_types, *mtp_layer_types]
-            hf_config.model_type = "dots3_note_mtp"
-            hf_config.update(
-                {"n_predict": n_predict, "architectures": ["Dots3NoteMTPModel"]}
-            )
         if hf_config.model_type in (
             "deepseek_v3",
             "deepseek_v32",
@@ -730,48 +710,6 @@ class SpeculativeConfig:
                     "num_hidden_layers": 0,
                     "n_predict": n_predict,
                     "architectures": ["MiMoMTPModel"],
-                }
-            )
-
-        if (arch := hf_config.architectures[0]) in (
-            "MiMoV2ForCausalLM",
-            "MiMoV2OmniForCausalLM",
-        ):
-            from vllm.model_executor.models.mimo_v2_mtp import (
-                _MIMO_V2_PRO_NUM_MTP_LAYERS,
-            )
-
-            mtp_arch_maps = {
-                "MiMoV2ForCausalLM": "MiMoV2MTPModel",
-                "MiMoV2OmniForCausalLM": "MiMoV2OmniMTPModel",
-            }
-
-            hf_config.model_type = "mimo_v2_mtp"
-            # vLLM currently supports only the first MiMo-V2 MTP layer.
-            n_predict = _MIMO_V2_PRO_NUM_MTP_LAYERS
-            hf_config.update(
-                {
-                    "num_hidden_layers": 0,
-                    "n_predict": n_predict,
-                    "num_nextn_predict_layers": n_predict,
-                    "architectures": [mtp_arch_maps[arch]],
-                }
-            )
-
-        if hf_config.architectures[0] == "MiMoV2FlashForCausalLM":
-            from vllm.model_executor.models.mimo_v2_mtp import (
-                _MIMO_V2_FLASH_NUM_MTP_LAYERS,
-            )
-
-            hf_config.model_type = "mimo_v2_mtp"
-            # vLLM currently supports only the first MiMo-V2 MTP layer.
-            n_predict = _MIMO_V2_FLASH_NUM_MTP_LAYERS
-            hf_config.update(
-                {
-                    "num_hidden_layers": 0,
-                    "n_predict": n_predict,
-                    "num_nextn_predict_layers": n_predict,
-                    "architectures": ["MiMoV2MTPModel"],
                 }
             )
 
@@ -990,32 +928,6 @@ class SpeculativeConfig:
                 {"n_predict": n_predict, "architectures": ["HYV3MTPModel"]}
             )
 
-        if hf_config.model_type == "hy_v4":
-            hf_config.model_type = "hy_v4_mtp"
-            n_predict = getattr(hf_config, "num_nextn_predict_layers", None)
-            hf_config.update(
-                {"n_predict": n_predict, "architectures": ["HYV4MTPModel"]}
-            )
-
-        if hf_config.model_type in ("inkling_mm_model", "inkling_model"):
-            mtp_config = getattr(hf_config, "mtp_config", None) or {}
-            hf_config = getattr(hf_config, "text_config", hf_config)
-            checkpoint_depths = mtp_config.get("num_nextn_predict_layers", 0)
-            if checkpoint_depths < 1:
-                raise ValueError("The Inkling checkpoint does not contain MTP weights")
-            hf_config.model_type = "inkling_mtp"
-            hf_config.update(
-                {
-                    "n_predict": checkpoint_depths,
-                    "num_nextn_predict_layers": checkpoint_depths,
-                    "chain_hidden_post_norm": mtp_config.get(
-                        "chain_hidden_post_norm", False
-                    ),
-                    "local_layer_ids": mtp_config.get("local_layer_ids", []),
-                    "architectures": ["InklingMTPModel"],
-                }
-            )
-
         if hf_config.model_type in ("gemma4_assistant", "gemma4_unified_assistant"):
             hf_config.model_type = "gemma4_mtp"
             text_config = getattr(hf_config, "text_config", hf_config)
@@ -1027,35 +939,6 @@ class SpeculativeConfig:
                 text_config.num_kv_shared_layers = 0
             hf_config.update({"n_predict": 1, "architectures": ["Gemma4MTPModel"]})
 
-        if (
-            hf_config.model_type == "minimax_m3_vl"
-            or initial_architecture == "MiniMaxM3SparseForConditionalGeneration"
-        ):
-            # MTP modules live on the language model of this VL checkpoint, so
-            # promote text_config before rewriting it into an MTP config.
-            quantization_config = getattr(hf_config, "quantization_config", None)
-            hf_config = getattr(hf_config, "text_config", hf_config)
-            if (
-                quantization_config is not None
-                and getattr(hf_config, "quantization_config", None) is None
-            ):
-                hf_config.update({"quantization_config": quantization_config})
-            hf_config.model_type = "minimax_m3_mtp"
-            n_predict = getattr(hf_config, "num_mtp_modules", 1)
-            hf_config.update(
-                {"n_predict": n_predict, "architectures": ["MiniMaxM3MTP"]}
-            )
-        elif (
-            hf_config.model_type == "minimax_m3_mtp"
-            or initial_architecture == "MiniMaxM3MTP"
-        ):
-            # Standalone MTP checkpoints already use a flat MTP config with no
-            # VL wrapper / text_config to promote, so just normalize the
-            # architecture and derive n_predict from num_mtp_modules.
-            n_predict = getattr(hf_config, "num_mtp_modules", 1)
-            hf_config.update(
-                {"n_predict": n_predict, "architectures": ["MiniMaxM3MTP"]}
-            )
         if hf_config.model_type == "glm5_next":
             hf_config.model_type = "glm5_next_mtp"
             text_config = hf_config.get_text_config()
@@ -1289,6 +1172,10 @@ class SpeculativeConfig:
                 self.draft_model_config = ModelConfig(
                     model=self.model,
                     runner="draft",
+                    spec_target_architectures=tuple(
+                        self.target_model_config.architectures
+                    ),
+                    speculative_method=self.method,
                     tokenizer=(
                         self.model
                         if self.use_heterogeneous_vocab
@@ -1376,7 +1263,7 @@ class SpeculativeConfig:
                     if (
                         self.num_speculative_tokens > 1
                         and self.draft_model_config.hf_config.model_type
-                        not in ("step3p5_mtp", "inkling_mtp")
+                        != "step3p5_mtp"
                     ):
                         logger.warning(
                             "Enabling num_speculative_tokens > 1 will run "
@@ -1487,6 +1374,10 @@ class SpeculativeConfig:
                             block_size = getattr(hf_config, "dspark_block_size", None)
                         self.num_speculative_tokens = block_size
                 elif n_predict is not None:
+                    if n_predict <= 0:
+                        raise ValueError(
+                            f"MTP draft requires positive n_predict, got {n_predict}"
+                        )
                     if self.num_speculative_tokens is None:
                         # Default to max value defined in draft model config.
                         self.num_speculative_tokens = n_predict
@@ -1570,6 +1461,9 @@ class SpeculativeConfig:
                         draft_model_config=self.draft_model_config,
                     )
                 )
+
+        if self.draft_model_config is not None:
+            self._validate_four_family_pair()
 
         if self.index_share_for_mtp_iteration is not None:
             if self.method != "mtp" or self.draft_model_config is None:
@@ -1742,16 +1636,68 @@ class SpeculativeConfig:
             )
         return speculative_draft_tensor_parallel_size
 
+    def _validate_four_family_pair(self):
+        from vllm.model_executor.models.registry import (
+            validate_four_family_speculation,
+        )
+
+        verifier = getattr(
+            self.draft_model_config.hf_config, "speculators_verifier", None
+        )
+        if isinstance(verifier, dict) and verifier.get("architectures"):
+            target_architectures = self.target_model_config.architectures
+            if set(verifier["architectures"]) != set(target_architectures):
+                raise ValueError(
+                    "Speculators verifier architectures do not match the "
+                    f"actual target architectures {target_architectures}."
+                )
+
+        validate_four_family_speculation(
+            list(getattr(self.target_model_config, "architectures", ()) or ()),
+            list(getattr(self.draft_model_config, "architectures", ()) or ()),
+            method=self.method,
+        )
+
+    def _resolve_target_repacked_eagle_arch(self) -> None:
+        """Map a checkpoint's intermediate EAGLE3 identity to a draft entry.
+
+        Qwen-VL and Kimi EAGLE3 checkpoints may declare the provisional
+        ``LlamaForCausalLMEagle3`` identity while their tensors follow the
+        target family. Select only a registered target-family implementation;
+        both the pair check below and registry admission revalidate it.
+        """
+        draft_config = self.draft_model_config
+        if self.method not in ("eagle", "eagle3") or list(
+            draft_config.architectures
+        ) != ["LlamaForCausalLMEagle3"]:
+            return
+        target_arch = self.target_model_config.architectures[0]
+        if target_arch == "Qwen2_5_VLForConditionalGeneration":
+            replacement = "Eagle3Qwen2_5vlForCausalLM"
+        elif target_arch == "Qwen3VLForConditionalGeneration":
+            replacement = "Eagle3Qwen3vlForCausalLM"
+        elif target_arch.startswith("Kimi"):
+            replacement = "Eagle3DeepseekV3ForCausalLM"
+        else:
+            raise ValueError(
+                "The checkpoint's LlamaForCausalLMEagle3 draft has no approved "
+                f"target-family implementation for {target_arch}."
+            )
+        draft_config.hf_config.architectures = [replacement]
+
     def update_arch_(self):
         """EagleConfig and ExtractHiddenStatesConfig update architectures, so update all
         architectures-related fields in self.draft_model_config
         """
+        self._resolve_target_repacked_eagle_arch()
         self.draft_model_config.hf_text_config = get_hf_text_config(
             self.draft_model_config.hf_config
         )
         self.draft_model_config.model_arch_config = (
             self.draft_model_config.get_model_arch_config()
         )
+        self._validate_four_family_pair()
+
         model_info, arch = self.draft_model_config.registry.inspect_model_cls(
             self.draft_model_config.architectures,
             self.draft_model_config,

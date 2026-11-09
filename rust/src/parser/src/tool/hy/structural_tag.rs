@@ -67,7 +67,6 @@ impl HyStructuralTagBuilder {
         let content = if elements.is_empty() {
             match self.dialect {
                 HyDialect::V3 => Format::any_text(),
-                HyDialect::V4 => Format::const_string(""),
             }
         } else {
             Format::sequence(elements)
@@ -250,39 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn required_uses_suffixed_compact_hy4_skeleton_and_bounded_values() {
-        let tag = build_for_dialect(
-            HyDialect::V4,
-            ":opensource",
-            &[tool(
-                "get_weather",
-                json!({
-                    "type": "object",
-                    "properties": { "city": { "type": "string" } },
-                    "required": ["city"]
-                }),
-            )],
-            ToolChoice::required(),
-        );
-
-        expect![[r#"
-            sequence
-              `<tool_calls:opensource>`
-              tags_with_separator `` at_least_one
-                tag `<tool_call:opensource>get_weather` .. `</tool_call:opensource>`
-                  sequence
-                    sequence
-                      `<arg_key:opensource>`
-                      `city`
-                      `</arg_key:opensource>`
-                      `<arg_value:opensource>`
-                      text excluding [`<tool_calls:opensource>`, `</tool_calls:opensource>`, `<tool_call:opensource>`, `</tool_call:opensource>`, `<arg_key:opensource>`, `</arg_key:opensource>`, `<arg_value:opensource>`, `</arg_value:opensource>`]
-                      `</arg_value:opensource>`
-              `</tool_calls:opensource>`
-        "#]].assert_eq(&outline(&tag.format));
-    }
-
-    #[test]
     fn optional_only_schema_keeps_declared_key_alternatives() {
         let tag = build(
             "",
@@ -352,26 +318,6 @@ mod tests {
               `\n</tool_calls>`
         "#]]
         .assert_eq(&outline(&forced.format));
-    }
-
-    #[test]
-    fn hy_v4_zero_argument_tool_has_empty_compact_body() {
-        let tag = build_for_dialect(
-            HyDialect::V4,
-            "",
-            &[tool(
-                "get_current_date",
-                json!({ "type": "object", "properties": {} }),
-            )],
-            ToolChoice::function("get_current_date"),
-        );
-        expect![[r#"
-            sequence
-              `<tool_calls>`
-              tag `<tool_call>get_current_date` `` `</tool_call>`
-              `</tool_calls>`
-        "#]]
-        .assert_eq(&outline(&tag.format));
     }
 
     #[test]

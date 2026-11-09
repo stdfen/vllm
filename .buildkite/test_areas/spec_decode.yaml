@@ -444,7 +444,6 @@ steps:
     - vllm/model_executor/models/qwen3_dflash.py
     - vllm/model_executor/models/qwen3_dflash2.py
     - vllm/model_executor/models/qwen3_5.py
-    - vllm/model_executor/models/laguna_dflash.py
     - tests/v1/e2e/spec_decode/
   commands:
     # DFlash2 NVFP4 (27B) does not fit a 35GB MIG slice; runs on B200 below.
@@ -470,7 +469,6 @@ steps:
       - vllm/model_executor/models/qwen3.py
       - vllm/model_executor/models/qwen3_dflash.py
       - vllm/model_executor/models/laguna.py
-      - vllm/model_executor/models/laguna_dflash.py
       - tests/v1/e2e/spec_decode/
       - vllm/platforms/rocm.py
 

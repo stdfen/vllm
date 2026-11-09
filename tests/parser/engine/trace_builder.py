@@ -38,11 +38,9 @@ from vllm.parser.engine.registered_adapters import (
     Glm47MoeParser,
     GraniteParser,
     GraniteThinkingParser,
-    InklingParser,
     KimiK2Parser,
     MiMoParser,
     MinimaxM2Parser,
-    MinimaxM3Parser,
     NemotronV3Parser,
     Plamo3Parser,
     Qwen3Parser,
@@ -537,66 +535,6 @@ def _build_minimax_m2(scenario: Scenario, validate: bool = True) -> Sample:
     )
     if validate:
         _validate_sample(sample, MinimaxM2Parser)
-    return sample
-
-
-# ── MiniMax M3 (namespaced XML elements, no reasoning) ───────────────
-
-_MINIMAX_M3_NS = "]<]minimax[>["
-
-
-def _minimax_m3_value(value: Any) -> str:
-    """Render a value the way the M3 chat template's ``to_xml`` does."""
-    ns = _MINIMAX_M3_NS
-    if isinstance(value, dict):
-        return "".join(
-            f"{ns}<{key}>{_minimax_m3_value(item)}{ns}</{key}>"
-            for key, item in value.items()
-        )
-    if isinstance(value, list):
-        return "".join(
-            f"{ns}<item>{_minimax_m3_value(item)}{ns}</item>" for item in value
-        )
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
-def _minimax_m3_segments(scenario: Scenario) -> list[tuple[str, bool]]:
-    ns = _MINIMAX_M3_NS
-    segs: list[tuple[str, bool]] = []
-    if scenario.content:
-        # The tool parser receives reasoning-stripped content.
-        segs.append((scenario.content, False))
-    if scenario.tool_calls:
-        invokes = "".join(
-            f'{ns}<invoke name="{tc.name}">'
-            f"{_minimax_m3_value(tc.arguments)}{ns}</invoke>\n"
-            for tc in scenario.tool_calls
-        )
-        segs.append((f"{ns}<tool_call>\n{invokes}{ns}</tool_call>", False))
-    return segs
-
-
-def _minimax_m3_expected_content(scenario: Scenario) -> str | None:
-    if scenario.tool_calls and not (scenario.content or "").strip():
-        return None
-    return scenario.content
-
-
-def _build_minimax_m3(scenario: Scenario, validate: bool = True) -> Sample:
-    sample = _make_sample(
-        sample_id=f"minimax_m3-{scenario.id}",
-        description=scenario.description,
-        vocab={},
-        segments=_minimax_m3_segments(scenario),
-        expected_reasoning=None,
-        expected_content=_minimax_m3_expected_content(scenario),
-        expected_tool_calls=_expected_tc(scenario),
-        tools=_expected_tools(scenario),
-    )
-    if validate:
-        _validate_sample(sample, MinimaxM3Parser)
     return sample
 
 
@@ -1109,77 +1047,6 @@ _KIMI_K2_SCENARIOS = [
 ]
 
 
-# ── Inkling (typed content blocks, JSON tool payloads) ───────────────────
-
-_TML_VOCAB: dict[str, int] = {
-    "<|message_model|>": 200001,
-    "<|content_text|>": 200004,
-    "<|content_model_end_sampling|>": 200006,
-    "<|content_thinking|>": 200008,
-    "<|end_message|>": 200010,
-    "<|content_tool_error|>": 200022,
-    "<|content_invoke_tool_json|>": 200049,
-    "<|content_invoke_tool_text|>": 200057,
-}
-
-
-def _inkling_block(
-    segs: list[tuple[str, bool]],
-    kind_token: str,
-    body: str,
-) -> None:
-    """Append one Inkling content block; blocks after the first start with
-    the ``<|message_model|>`` role token (the first block continues the
-    generation prompt directly)."""
-    if segs:
-        segs.append(("<|message_model|>", True))
-    segs.append((kind_token, True))
-    if body:
-        segs.append((body, False))
-    segs.append(("<|end_message|>", True))
-
-
-def _inkling_segments(scenario: Scenario) -> list[tuple[str, bool]]:
-    segs: list[tuple[str, bool]] = []
-    if scenario.reasoning is not None:
-        _inkling_block(segs, "<|content_thinking|>", scenario.reasoning)
-    if scenario.tool_calls is not None and not scenario.tool_calls:
-        _inkling_block(segs, "<|content_invoke_tool_json|>", "")
-    if scenario.content is not None:
-        _inkling_block(segs, "<|content_text|>", scenario.content)
-    if scenario.tool_calls:
-        for tc in scenario.tool_calls:
-            args = json.dumps(tc.arguments, ensure_ascii=False, separators=(",", ":"))
-            payload = f'{{"name":"{tc.name}","args":{args}}}'
-            _inkling_block(segs, "<|content_invoke_tool_json|>", payload)
-    return segs
-
-
-def _build_inkling(scenario: Scenario, validate: bool = True) -> Sample:
-    prompt_token_ids = None
-    if scenario.after_tool_response:
-        # Prompt ends with a closed tool-response block and the
-        # generation-prompt role token.
-        prompt_token_ids = [
-            _TML_VOCAB["<|end_message|>"],
-            _TML_VOCAB["<|message_model|>"],
-        ]
-    sample = _make_sample(
-        sample_id=f"inkling-{scenario.id}",
-        description=scenario.description,
-        vocab=_TML_VOCAB,
-        segments=_inkling_segments(scenario),
-        expected_reasoning=scenario.reasoning,
-        expected_content=_qwen3_expected_content(scenario),
-        expected_tool_calls=_expected_tc(scenario),
-        tools=_expected_tools(scenario),
-        prompt_token_ids=prompt_token_ids,
-    )
-    if validate:
-        _validate_sample(sample, InklingParser)
-    return sample
-
-
 # ── PLaMo3 (literal nested tool-request wrappers) ───────────────────
 
 _PLAMO3_MARKERS = (
@@ -1336,7 +1203,6 @@ _BUILDERS: dict[str, Any] = {
     "gemma4": _build_gemma4,
     "granite": _build_granite,
     "minimax_m2": _build_minimax_m2,
-    "minimax_m3": _build_minimax_m3,
     "nemotron_v3": _build_nemotron_v3,
     "granite_thinking_parser": _build_granite_thinking,
     "seed_oss": _build_seed_oss,
@@ -1345,7 +1211,6 @@ _BUILDERS: dict[str, Any] = {
     "qwen3": _build_qwen3,
     "mimo": _build_mimo,
     "step3p5": _build_step3p5,
-    "inkling": _build_inkling,
     "plamo3": _build_plamo3,
 }
 
