@@ -44,6 +44,17 @@ def environment(values):
     return dict(value.split("=", 1) for value in values or [])
 
 
+def split_bind(value):
+    """Split a Docker bind without confusing a Windows drive letter for a mode."""
+    source, _, mode = value.rpartition(":")
+    if not source:
+        return None
+    root, _, target = source.rpartition(":")
+    if not root:
+        return source, "", ""
+    return root, target, mode
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True)
@@ -97,11 +108,13 @@ def main():
         merged[key] = f"/var/cache/vllm-runtime/{relative}"
 
     host = copy.deepcopy(baseline["HostConfig"])
-    binds = host.get("Binds") or []
+    baseline_binds = host.get("Binds") or []
+    binds = list(baseline_binds)
     host["Binds"] = [
         value
         for value in binds
-        if value.split(":")[1] not in {"/root/.cache", "/var/cache/vllm-runtime"}
+        if (split_bind(value) or (None, None))[1]
+        not in {"/root/.cache", "/var/cache/vllm-runtime"}
     ]
     host["Binds"].append(f"{cache}:/var/cache/vllm-runtime:rw")
     # The old cache bind also contains a required DSpark token-list input.
@@ -112,21 +125,43 @@ def main():
         relative = pathlib.PurePosixPath(markov).relative_to("/root/.cache")
         if ".." in relative.parts:
             raise RuntimeError("Invalid Markov input path")
-        old_cache_binds = [
-            value.split(":")[0]
-            for value in binds
-            if value.split(":")[1] == "/root/.cache"
+        parsed_binds = [split_bind(value) for value in binds]
+        markov_binds = [
+            pathlib.Path(parts[0])
+            for parts in parsed_binds
+            if parts and parts[1] == markov and parts[2] == "ro"
         ]
-        if len(old_cache_binds) != 1:
+        baseline_cache_binds = [
+            pathlib.Path(parts[0])
+            for parts in (split_bind(value) for value in baseline_binds)
+            if parts and parts[1] == "/root/.cache"
+        ]
+        if len(markov_binds) > 1:
+            raise RuntimeError("Multiple Markov file binds are not allowed")
+        if len(markov_binds) == 1:
+            source = markov_binds[0].resolve(strict=True)
+        elif len(baseline_cache_binds) == 1:
+            old_cache_root = baseline_cache_binds[0].resolve(strict=True)
+            if not old_cache_root.is_dir():
+                raise RuntimeError("Baseline cache bind is not a directory")
+            source = (old_cache_root / relative).resolve(strict=True)
+        else:
             raise RuntimeError(
-                "A unique baseline cache bind is required for Markov input"
+                "A unique baseline cache bind or Markov file bind is required"
             )
-        old_cache_root = pathlib.Path(old_cache_binds[0]).resolve(strict=True)
-        source = (old_cache_root / relative).resolve(strict=True)
-        if not source.is_file() or not source.is_relative_to(old_cache_root):
-            raise RuntimeError("Markov input is not a file inside the baseline cache")
+        if not markov_binds:
+            allowed_root = baseline_cache_binds[0].resolve(strict=True)
+            if not source.is_relative_to(allowed_root):
+                raise RuntimeError("Markov input is outside its verified source root")
+        if not source.is_file():
+            raise RuntimeError("Markov input is not a regular file")
         with source.open("rb") as token_input:
             checksum = hashlib.file_digest(token_input, "sha256").hexdigest()
+        host["Binds"] = [
+            value
+            for value in host["Binds"]
+            if (split_bind(value) or (None, None))[1] != markov
+        ]
         host["Binds"].append(f"{source}:{markov}:ro")
         external_inputs["markovTokenListSha256"] = checksum
     host["ContainerIDFile"] = ""

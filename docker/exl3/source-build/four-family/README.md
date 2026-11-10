@@ -128,3 +128,21 @@ was executed. Class declarations and asset capture do not prove processor
 construction, image/video handling or GPU acceptance. Evidence:
 `manifest-processor-declarations.json` and
 `manifest-processor-assets-backfill.json` in the workspace audit directory.
+
+## Additional leaf implementation pruning (2026-11-10)
+
+75 excluded model implementation modules and 26 model-exclusive test files were
+removed after production-import and symbol-reference review. A mixed speculator
+test was edited to remove only its deleted-model cases. No test covering a
+retained model was removed. The registered four-family implementations and
+shared infrastructure remain.
+
+The first 41-module batch passed 4043 tests with 2 skips; the 49-module batch
+passed 4084 tests with 2 skips in isolated offline containers. The final
+75-module and 26-exclusive-test state passed 4131 tests with 2 skips from a
+clean source snapshot (JUnit `leaf-prune-75-final-20261110-junit.xml`), and the
+static production-import closure check reported no missing model modules. The
+152 held candidates still require reference classification or migration; this is
+an incremental change, not completion of all excluded implementations. Runtime
+image acceptance for the final source commit is tracked separately, and earlier
+S1/49-module images do not represent this state.
