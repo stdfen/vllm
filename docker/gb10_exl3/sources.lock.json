@@ -14,6 +14,10 @@
     "old_binary_reused": false
   },
   "compatibility_reference": {
+    "mixed_checkpoint_plugin_archive_sha256": "4ffe0dfbdd087a957fb403c86730bdafac271c3f99124bedd4e09836bf1aec2b",
+    "mixed_checkpoint_plugin_origin": "archived vllm_exl3_moe from the previous image; no upstream revision available",
+    "quantization_method": "deepseek_v41_exl3",
+    "checkpoint_plan_sha256": "247132169521118cf9d81530d85864c63a47c047689947402193c593015a2eb0",
     "installed_vllm_source_archive_sha256": "9af37c0a5492a19ea68dc6d05136929f25ae8d1019324355699ca3d9ba3a712d",
     "native_engram_reader_sha256": "91d53d241d1a73da1a1f2883cdad52ba3026789de7748224cb44d45a5f9c170d"
   },

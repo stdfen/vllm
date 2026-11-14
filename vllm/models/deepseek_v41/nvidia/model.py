@@ -751,7 +751,7 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
         aux_stream_list = (
             None
             if vllm_config.quant_config is not None
-            and vllm_config.quant_config.get_name() == "exl3"
+            and vllm_config.quant_config.get_name() == "deepseek_v41_exl3"
             else [torch.cuda.Stream() for _ in range(3)]
         )
         # Keep mHC independent of the streams used inside attention.
@@ -1356,20 +1356,6 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
                 # Vision weights are loaded by the outer multimodal wrapper.
                 logger.warning_once("Skipping non-text weight: %s", name)
                 continue
-            grouped_match = re.search(
-                r"\.slice\.(\d+)\.(trellis|suh|svh|mul1|mcg)$", name
-            )
-            if grouped_match and name not in params_dict:
-                mapped = name[: grouped_match.start()] + "." + grouped_match.group(2)
-                if is_pp_missing_parameter(mapped, self):
-                    continue
-                param = params_dict[mapped]
-                loaded = param.weight_loader(
-                    param, loaded_weight, int(grouped_match.group(1))
-                )
-                if loaded is not False:
-                    loaded_params.add(mapped)
-                continue
             if ".shared_experts." in name:
                 if is_pp_missing_parameter(name, self):
                     continue
@@ -1675,6 +1661,12 @@ class DeepseekV41LLMForCausalLM(
             self.lm_head = ParallelLMHead(
                 config.vocab_size,
                 config.hidden_size,
+                quant_config=(
+                    vllm_config.quant_config
+                    if vllm_config.quant_config is not None
+                    and vllm_config.quant_config.get_name() == "deepseek_v41_exl3"
+                    else None
+                ),
                 prefix=maybe_prefix(prefix, "lm_head"),
             )
         else:

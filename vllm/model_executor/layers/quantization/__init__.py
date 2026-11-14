@@ -36,7 +36,7 @@ QuantizationMethods = Literal[
     "mxfp4",
     "gpt_oss_mxfp4",
     "deepseek_v4_fp8",
-    "exl3",
+    "deepseek_v41_exl3",
     "online",
     # Below are online quant shorthand names (see vllm.config.quantization).
     # Listed here as strings to avoid a circular import; kept in sync with
@@ -114,6 +114,11 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
     if quantization not in QUANTIZATION_METHODS:
         raise ValueError(f"Invalid quantization method: {quantization}")
 
+    if quantization == "deepseek_v41_exl3":
+        from .deepseek_v41_exl3.config import DeepseekV41Exl3Config
+
+        return DeepseekV41Exl3Config
+
     # lazy import to avoid triggering `torch.compile` too early
     from vllm.config.quantization import _ONLINE_SHORTHANDS
     from vllm.model_executor.layers.quantization.quark.quark import QuarkConfig
@@ -137,7 +142,6 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
     from .compressed_tensors.compressed_tensors import (
         CompressedTensorsConfig,
     )
-    from .exl3.config import Exl3Config
     from .experts_int8 import ExpertsInt8Config
     from .fbgemm_fp8 import FBGEMMFp8Config
     from .fp8 import Fp8Config
@@ -178,7 +182,6 @@ def get_quantization_config(quantization: str) -> type[QuantizationConfig]:
         "mxfp4": Mxfp4Config,
         "gpt_oss_mxfp4": GptOssMxfp4Config,
         "deepseek_v4_fp8": deepseek_config,
-        "exl3": Exl3Config,
         "humming": HummingConfig,
         "online": OnlineQuantizationConfig,
         # MiniMax-style checkpoints tag `quant_method: "mxfp8"`; load with the

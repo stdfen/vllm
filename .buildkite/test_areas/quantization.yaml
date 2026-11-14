@@ -8,10 +8,10 @@ steps:
   timeout_in_minutes: 10
   source_file_dependencies:
   - vllm/model_executor/layers/quantization/__init__.py
-  - vllm/model_executor/layers/quantization/exl3/
-  - tests/quantization/test_exl3_checkpoint.py
+  - vllm/model_executor/layers/quantization/deepseek_v41_exl3/
+  - tests/quantization/test_deepseek_v41_exl3.py
   commands:
-  - pytest -v -s quantization/test_exl3_checkpoint.py
+  - pytest -v -s quantization/test_deepseek_v41_exl3.py
 
 # Disabled until torchao transitive dependencies are locked.
 # - label: ":nvidia: (H200 MIG 35GB) Quantization"
