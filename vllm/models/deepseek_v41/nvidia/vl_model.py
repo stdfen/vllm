@@ -97,9 +97,12 @@ def _make_deepseek_v4_vl_weights_mapper(
         orig_to_new_prefix=orig_to_new_prefix,
         orig_to_new_regex=base.orig_to_new_regex,
         orig_to_new_suffix={
-            "head.weight": "language_model.lm_head.weight",
-            "embed.weight": "embed_tokens.weight",
-            ".ffn.gate.bias": ".ffn.gate.e_score_correction_bias",
+            key: (
+                "language_model." + target
+                if key.startswith("head.") and target is not None
+                else target
+            )
+            for key, target in base.orig_to_new_suffix.items()
         },
         orig_to_new_substr={
             ".shared_experts.w2": ".shared_experts.down_proj",

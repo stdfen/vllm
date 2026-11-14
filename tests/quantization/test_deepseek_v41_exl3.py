@@ -24,6 +24,28 @@ def test_model_config_accepts_mixed_checkpoint_override_order(tmp_path):
     assert config.hf_text_config.num_hidden_layers == 40
 
 
+def test_multimodal_mapper_preserves_child_checkpoint_names():
+    from vllm.models.deepseek_v41.nvidia.model import _make_deepseek_v4_weights_mapper
+    from vllm.models.deepseek_v41.nvidia.vl_model import (
+        _make_deepseek_v4_vl_weights_mapper,
+    )
+
+    child = _make_deepseek_v4_weights_mapper("fp4", "weight_scale")
+    outer = _make_deepseek_v4_vl_weights_mapper("fp4", "weight_scale")
+    names = [
+        *(
+            f"head.{kind}"
+            for kind in ("weight", "trellis", "suh", "svh", "mul1", "mcg")
+        ),
+        "embed.weight",
+        "norm.weight",
+        "layers.0.attn.wq_a.trellis",
+        "layers.1.engram.embed.weight",
+    ]
+    for name in names:
+        assert outer.map_name(name) == "language_model." + child.map_name(name)
+
+
 def test_mixed_config_preserves_fp8_base_and_exl3_head():
     config = get_quantization_config("deepseek_v41_exl3").from_config(
         {
