@@ -33,6 +33,7 @@ class PackReader {
   int fd_ = -1;
   int64_t rows_, dim_, scale_, stride_, capacity_ = 0, slots_ = 0;
   int threads_;
+  bool direct_io_;
   std::vector<Item> items_;
   std::vector<int64_t> groups_, tags_;
   std::vector<uint8_t> cache_;
@@ -153,22 +154,26 @@ class PackReader {
 
  public:
   PackReader(const std::string& path, int64_t rows, int64_t dim, int64_t scale,
-             int64_t stride, int threads)
+             int64_t stride, int threads, bool direct_io = true)
       : rows_(rows),
         dim_(dim),
         scale_(scale),
         stride_(stride),
-        threads_(threads) {
+        threads_(threads),
+        direct_io_(direct_io) {
     if (rows <= 0 || dim <= 0 || scale <= 0 || stride < dim + scale ||
         stride % 512 || threads < 1 || threads > 128)
       throw std::invalid_argument("Invalid Engram pack reader geometry");
-    fd_ = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_DIRECT);
-    if (fd_ < 0) throw std::runtime_error("Engram pack O_DIRECT open failed");
+    fd_ = ::open(path.c_str(),
+                 O_RDONLY | O_CLOEXEC | (direct_io_ ? O_DIRECT : 0));
+    if (fd_ < 0) throw std::runtime_error("Engram pack open failed");
+    if (!direct_io_) posix_fadvise(fd_, 0, 0, POSIX_FADV_RANDOM);
     struct statx info{};
-    if (::statx(fd_, "", AT_EMPTY_PATH, STATX_DIOALIGN, &info) != 0 ||
-        !(info.stx_mask & STATX_DIOALIGN) || !info.stx_dio_offset_align ||
-        stride % info.stx_dio_offset_align || !info.stx_dio_mem_align ||
-        4096 % info.stx_dio_mem_align) {
+    if (direct_io_ &&
+        (::statx(fd_, "", AT_EMPTY_PATH, STATX_DIOALIGN, &info) != 0 ||
+         !(info.stx_mask & STATX_DIOALIGN) || !info.stx_dio_offset_align ||
+         stride % info.stx_dio_offset_align || !info.stx_dio_mem_align ||
+         4096 % info.stx_dio_mem_align)) {
       ::close(fd_);
       fd_ = -1;
       throw std::runtime_error("Engram filesystem DIO alignment unsupported");
@@ -270,6 +275,7 @@ class PackReader {
         {"disk_reads", reads_.load()},
         {"disk_bytes", bytes_.load()},
         {"failed", failed_.load()},
+        {"direct_io", static_cast<uint64_t>(direct_io_)},
         {"cache_allocated_bytes", cache_.capacity() + tags_.capacity() * 8 +
                                       (slots_ ? 64 * sizeof(std::mutex) : 0)},
         {"reader_fixed_bytes", sizeof(*this)},
@@ -282,7 +288,10 @@ class PackReader {
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, module) {
   pybind11::class_<PackReader>(module, "PackReader")
       .def(pybind11::init<const std::string&, int64_t, int64_t, int64_t,
-                          int64_t, int>())
+                          int64_t, int, bool>(),
+           pybind11::arg("path"), pybind11::arg("rows"), pybind11::arg("dim"),
+           pybind11::arg("scale"), pybind11::arg("stride"),
+           pybind11::arg("threads"), pybind11::arg("direct_io") = true)
       .def("allocate", &PackReader::allocate)
       .def("enqueue_read", &PackReader::enqueue_read)
       .def("read_rows", &PackReader::read_rows,

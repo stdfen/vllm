@@ -25,7 +25,10 @@ from vllm.platforms import current_platform
     not current_platform.is_cuda(), reason="Checkpoint disk reader is a CUDA backend"
 )
 @pytest.mark.parametrize("packed", [False, True])
-@pytest.mark.parametrize("backend", ["checkpoint", "pack", "pack-no-cache"])
+@pytest.mark.parametrize(
+    "backend",
+    ["checkpoint", "pack", "pack-no-cache", "pack-buffered", "pack-buffered-no-cache"],
+)
 def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed, backend):
     """Disk rows match the resident kernel, including new IDs on every replay."""
     rows, dim = 36, 256
@@ -73,7 +76,8 @@ def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed, b
                 dict(rows=rows, dim=dim, stride=512),
                 32,
                 2,
-                cache_bytes=0 if backend == "pack-no-cache" else 32768,
+                cache_bytes=0 if backend.endswith("no-cache") else 32768,
+                direct_io="buffered" not in backend,
             )
         reader.allocate_staging(8)
         ids = torch.tensor([[0, 17], [16, 35], [0, 17], [-1, 36]], dtype=torch.int32)
@@ -119,7 +123,8 @@ def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed, b
         assert stats["calls"] == 8  # three eager calls plus five real replays
         assert stats["logical_rows"] == 64
         assert stats["unique_rows"] == 32
-        if backend == "pack":
+        assert stats["direct_io"] == ("buffered" not in backend)
+        if not backend.endswith("no-cache"):
             assert stats["cache_hits"] > 0
             assert stats["disk_reads"] < stats["unique_rows"]
             assert stats["cache_allocated_bytes"] <= 32768

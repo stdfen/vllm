@@ -46,6 +46,12 @@ class EngramConfig:
     disk_pack_manifest: str | None = None
     """P0 rank-local physical packs; absent keeps the checkpoint reader."""
 
+    disk_pack_io: Literal["direct", "buffered"] = "direct"
+    """Explicit pack I/O policy. Buffered I/O also uses the OS page cache."""
+
+    disk_pack_threads: int | None = None
+    """Pack-only reader threads; None inherits the common disk_threads setting."""
+
     disk_cache_bytes: int = 0
     """Hard bound for pack reader cache and cache metadata, per layer."""
 
@@ -79,8 +85,18 @@ class EngramConfig:
             raise ValueError("disk_threads must be >= 1")
         if self.disk_threads > 128 or self.disk_cache_bytes < 0:
             raise ValueError("disk_threads must be <= 128 and cache bytes nonnegative")
+        if (
+            self.disk_pack_threads is not None
+            and not 1 <= self.disk_pack_threads <= 128
+        ):
+            raise ValueError("disk_pack_threads must be between 1 and 128")
         if (self.disk_pack_manifest and not self.disk_offload) or (
-            (self.disk_cache_bytes or self.disk_stats_dir)
+            (
+                self.disk_cache_bytes
+                or self.disk_stats_dir
+                or self.disk_pack_threads is not None
+                or self.disk_pack_io != "direct"
+            )
             and not self.disk_pack_manifest
         ):
             raise ValueError(

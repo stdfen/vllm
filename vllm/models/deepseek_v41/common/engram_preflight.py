@@ -30,6 +30,8 @@ def common_recipe(recipe):
         "disk_cache_bytes",
         "disk_verify",
         "disk_stats_dir",
+        "disk_pack_io",
+        "disk_pack_threads",
     ):
         config.pop(key, None)
     argv[position] = pack.canonical(config).decode()
@@ -93,7 +95,10 @@ def estimate(
     # Conservative for this model: 24 heads/layer instead of the actual 12/rank.
     # Includes sort/group metadata, thread scratch, status, and allocator margin.
     reader_extra = 2 * (
-        cache_bytes + tokens * 24 * 32 + options["disk_threads"] * 512 + (1 << 20)
+        cache_bytes
+        + tokens * 24 * 32
+        + (options.get("disk_pack_threads") or options["disk_threads"]) * 512
+        + (1 << 20)
     )
     # Separate policy margin covers sampling blind spots, not a measured workspace.
     required = (
@@ -111,6 +116,12 @@ def estimate(
         required_available_bytes=required,
         measured_A_increment_bytes=profile["measured_increment_bytes"],
         bounded_B_extra_bytes=reader_extra,
+        pack_io=options.get("disk_pack_io", "direct"),
+        page_cache_policy=(
+            "OS-managed reclaimable cache; not bounded by disk_cache_bytes"
+            if options.get("disk_pack_io") == "buffered"
+            else "pack reads bypass OS page cache"
+        ),
         sampling_policy_margin_bytes=sampling_margin,
         reserve_policy_bytes=reserve_bytes,
         validated_context=profile["validated_context"],

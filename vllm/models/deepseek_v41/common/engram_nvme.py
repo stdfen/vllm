@@ -86,11 +86,25 @@ class PackedDiskReader(CheckpointDiskReader):
             path,
         )
         return cls(
-            path, record, block_size, threads, options.disk_cache_bytes, stats_path
+            path,
+            record,
+            block_size,
+            options.disk_pack_threads or threads,
+            options.disk_cache_bytes,
+            stats_path,
+            direct_io=options.disk_pack_io == "direct",
         )
 
     def __init__(
-        self, path, record, block_size, threads, cache_bytes=0, stats_path=None
+        self,
+        path,
+        record,
+        block_size,
+        threads,
+        cache_bytes=0,
+        stats_path=None,
+        *,
+        direct_io=True,
     ):
         self.dim, self.block_size = record["dim"], block_size
         self.cache_bytes = cache_bytes
@@ -101,6 +115,7 @@ class PackedDiskReader(CheckpointDiskReader):
             self.dim // block_size,
             record["stride"],
             threads,
+            direct_io,
         )
         self.views, self.recorded = None, False
         self.stats_path = stats_path
