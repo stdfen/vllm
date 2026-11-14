@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 from pydantic import model_validator
 
@@ -43,6 +43,18 @@ class EngramConfig:
     disk_threads: int = 32
     """Persistent host reader threads per Engram layer."""
 
+    disk_pack_manifest: str | None = None
+    """P0 rank-local physical packs; absent keeps the checkpoint reader."""
+
+    disk_cache_bytes: int = 0
+    """Hard bound for pack reader cache and cache metadata, per layer."""
+
+    disk_verify: Literal["sample", "full"] = "full"
+    """Pack integrity policy. Sample checks are not full-file integrity checks."""
+
+    disk_stats_dir: str | None = None
+    """Optional directory for actual native replay counters every ten seconds."""
+
     embedding_across_dp: bool = False
     """Shard embeddings across TP and all DP ranks when enabled.
     Otherwise, each DP rank has a separate TP-sharded embedding replica."""
@@ -65,6 +77,15 @@ class EngramConfig:
     def _validate_shared_memory(self) -> Self:
         if self.disk_threads < 1:
             raise ValueError("disk_threads must be >= 1")
+        if self.disk_threads > 128 or self.disk_cache_bytes < 0:
+            raise ValueError("disk_threads must be <= 128 and cache bytes nonnegative")
+        if (self.disk_pack_manifest and not self.disk_offload) or (
+            (self.disk_cache_bytes or self.disk_stats_dir)
+            and not self.disk_pack_manifest
+        ):
+            raise ValueError(
+                "Pack/cache/stats options require disk_offload and manifest"
+            )
         if self.disk_offload and (
             not self.cpu_offload
             or self.dp_shared_memory

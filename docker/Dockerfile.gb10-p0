@@ -1,0 +1,9 @@
+ARG BASE_IMAGE=local/vllm033-exl3-common:98cdfeae
+FROM ${BASE_IMAGE}
+ARG SOURCE_COMMIT=uncommitted-development
+LABEL ai.vllm.p0.source-commit="${SOURCE_COMMIT}" \
+      ai.vllm.p0.common-commit="98cdfeae38899fa606245a850026ddd6566eeccf" \
+      ai.vllm.compat.scope="v033-exl3-gb10-tp2-three-p0"
+COPY vllm/ /usr/local/lib/python3.12/dist-packages/vllm/
+COPY docker/gb10_exl3/build_pack_reader.py /opt/vllm-033-compat/
+RUN /opt/vllm-033-compat/.venv/bin/python /opt/vllm-033-compat/build_pack_reader.py

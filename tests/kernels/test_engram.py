@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import bisect
 import inspect
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -23,7 +25,8 @@ from vllm.platforms import current_platform
     not current_platform.is_cuda(), reason="Checkpoint disk reader is a CUDA backend"
 )
 @pytest.mark.parametrize("packed", [False, True])
-def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed):
+@pytest.mark.parametrize("backend", ["checkpoint", "pack", "pack-no-cache"])
+def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed, backend):
     """Disk rows match the resident kernel, including new IDs on every replay."""
     rows, dim = 36, 256
     weight = (
@@ -53,7 +56,26 @@ def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed):
             disk_source=(str(weight_file), len(prefix), str(scale_file), len(prefix)),
             disk_threads=2,
         )
-        disk._disk_reader.allocate_staging(8)
+        reader = disk._disk_reader
+        assert reader is not None
+        if backend.startswith("pack"):
+            from vllm.models.deepseek_v41.common.engram_nvme import PackedDiskReader
+
+            path = tmp_path / "rows.pack"
+            raw = bytearray(4096)
+            for row in range(rows):
+                raw.extend(weight[row].view(torch.uint8).numpy().tobytes())
+                raw.extend(scale[row].numpy().tobytes())
+                raw.extend(bytes(248))
+            path.write_bytes(raw)
+            reader = PackedDiskReader(
+                path,
+                dict(rows=rows, dim=dim, stride=512),
+                32,
+                2,
+                cache_bytes=0 if backend == "pack-no-cache" else 32768,
+            )
+        reader.allocate_staging(8)
         ids = torch.tensor([[0, 17], [16, 35], [0, 17], [-1, 36]], dtype=torch.int32)
         dtype = torch.uint8 if packed else torch.bfloat16
         width = dim + dim // 32 if packed else dim
@@ -63,7 +85,7 @@ def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed):
     resident.weight_scale_inv.data.copy_(scale)
 
     def compare():
-        torch.cuda.synchronize()
+        torch.accelerator.synchronize()
         if packed:
             assert torch.equal(actual, expected)
         else:
@@ -72,11 +94,11 @@ def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed):
 
     for _ in range(3):
         resident.lookup(ids, expected)
-        disk.lookup(ids, actual)
+        reader.lookup(disk, ids, actual, False)
         compare()
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
-        disk.lookup(ids, actual)
+        reader.lookup(disk, ids, actual, False)
     for shift in range(5):
         updated = torch.tensor(
             [
@@ -92,6 +114,60 @@ def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed):
         resident.lookup(ids, expected)
         graph.replay()
         compare()
+    if backend.startswith("pack"):
+        stats = reader.native.stats()
+        assert stats["calls"] == 8  # three eager calls plus five real replays
+        assert stats["logical_rows"] == 64
+        assert stats["unique_rows"] == 32
+        if backend == "pack":
+            assert stats["cache_hits"] > 0
+            assert stats["disk_reads"] < stats["unique_rows"]
+            assert stats["cache_allocated_bytes"] <= 32768
+        else:
+            assert stats["cache_hits"] == 0
+            assert stats["disk_reads"] == stats["unique_rows"]
+            assert stats["cache_allocated_bytes"] == 0
+
+
+@pytest.mark.skipif(not current_platform.is_cuda(), reason="CUDA pack reader")
+def test_engram_pack_short_read_fails_on_graph_replay(tmp_path):
+    """Corrupt a pack after capture; every replay must still check I/O status."""
+    path = tmp_path / "fault.pack"
+    path.write_bytes(bytes(4096 + 512))
+    script = r"""
+import os
+import sys
+import torch
+from vllm.models.deepseek_v41.common.engram_nvme import PackedDiskReader
+
+reader = PackedDiskReader(sys.argv[1], dict(rows=1, dim=256, stride=512), 32, 2)
+reader.allocate_staging(1)
+reader.ids.zero_()
+stream = torch.cuda.current_stream()
+reader.enqueue(stream, 1, False)
+torch.accelerator.synchronize()
+graph = torch.cuda.CUDAGraph()
+with torch.cuda.graph(graph):
+    reader.enqueue(torch.cuda.current_stream(), 1, True)
+os.truncate(sys.argv[1], 4096)
+try:
+    graph.replay()
+    torch.accelerator.synchronize()
+except RuntimeError as error:
+    if "device-side assert" not in str(error):
+        raise
+    print("EXPECTED_GRAPH_IO_FAILURE", flush=True)
+    os._exit(0)  # The asserted CUDA context cannot be reused.
+raise AssertionError("Truncated pack produced a successful graph replay")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(path)],
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "EXPECTED_GRAPH_IO_FAILURE" in result.stdout
 
 
 def _reference_engram_post_wkv(

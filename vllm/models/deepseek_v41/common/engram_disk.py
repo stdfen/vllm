@@ -22,17 +22,17 @@ def resolve_source(layer_id: int) -> tuple[str, int, str, int]:
     model = get_current_vllm_config().model_config
     root = Path(model.model)
     if not root.is_dir():
-        from huggingface_hub import snapshot_download
+        from vllm.transformers_utils.repo_utils import hf_api
 
         root = Path(
-            snapshot_download(
-                model.model, revision=model.revision, local_files_only=True
+            hf_api().snapshot_download(
+                repo_id=model.model, revision=model.revision, local_files_only=True
             )
         )
     index = json.loads((root / "model.safetensors.index.json").read_text())[
         "weight_map"
     ]
-    source = []
+    source: list[tuple[str, int]] = []
     for suffix in ("weight", "scale"):
         name = f"layers.{layer_id}.engram.embed.{suffix}"
         path = root / index[name]
@@ -47,8 +47,8 @@ def resolve_source(layer_id: int) -> tuple[str, int, str, int]:
         start, end = header[name]["data_offsets"]
         if not 0 <= start <= end <= path.stat().st_size - 8 - size:
             raise ValueError(f"Invalid Engram tensor range: {path}:{name}")
-        source.extend((str(path), 8 + size + start))
-    return tuple(source)
+        source.append((str(path), 8 + size + start))
+    return (*source[0], *source[1])
 
 
 def load_extension():
@@ -130,13 +130,7 @@ class CheckpointDiskReader:
                 value=-1,
             )
         self.ids[:rows].copy_(local.reshape(-1), non_blocking=True)
-        self.native.enqueue_read(
-            stream.cuda_stream,
-            self.ids.data_ptr(),
-            self.weight.data_ptr(),
-            self.scale.data_ptr(),
-            rows,
-        )
+        self.enqueue(stream, rows, capturing)
         if self.views is None:
             self.views = (
                 get_accelerator_view_from_cpu_tensor(
@@ -173,3 +167,12 @@ class CheckpointDiskReader:
         if not capturing:
             self.done.record(stream)
             self.recorded = True
+
+    def enqueue(self, stream, rows, capturing):
+        self.native.enqueue_read(
+            stream.cuda_stream,
+            self.ids.data_ptr(),
+            self.weight.data_ptr(),
+            self.scale.data_ptr(),
+            rows,
+        )

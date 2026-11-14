@@ -815,6 +815,8 @@ class DPSharedEngramStorage:
             mapping = owner = tensor = None
             try:
                 with open(path, "r+b") as file:
+                    if sys.platform == "win32":
+                        raise RuntimeError("Engram shared mappings require POSIX mmap")
                     mapping = mmap.mmap(file.fileno(), num_bytes, flags=mmap.MAP_SHARED)
                 owner = np.frombuffer(mapping, dtype=np.uint8)
                 pointer = owner.ctypes.data
@@ -972,6 +974,7 @@ class ParallelEngramEmbedding(nn.Module):
         use_thp: bool = False,
         disk_source: tuple[str, int, str, int] | None = None,
         disk_threads: int = 32,
+        disk_layer_id: int | None = None,
     ) -> None:
         super().__init__()
         assert head_sizes and all(size > 0 for size in head_sizes)
@@ -1071,17 +1074,28 @@ class ParallelEngramEmbedding(nn.Module):
         if self.disk_offload:
             from .engram_disk import CheckpointDiskReader
 
-            self._disk_reader = CheckpointDiskReader(
-                disk_source,
+            reader_args = (
                 self.vocab_start_idx,
                 self.part_num_embeddings,
                 dim,
                 block_size,
                 disk_threads,
             )
+            if getattr(
+                get_current_vllm_config().engram_config, "disk_pack_manifest", None
+            ):
+                from .engram_nvme import PackedDiskReader
+
+                if disk_layer_id is None:
+                    raise ValueError("Physical Engram packs require a layer id")
+                self._disk_reader = PackedDiskReader.from_config(
+                    disk_layer_id, *reader_args
+                )
+            else:
+                self._disk_reader = CheckpointDiskReader(disk_source, *reader_args)
             logger.info(
                 "Engram checkpoint disk reader: %s; %d local rows",
-                self._disk_reader.native.mode(),
+                type(self._disk_reader).__name__,
                 self.part_num_embeddings,
             )
         elif cpu_offload and not self.weight.is_meta:
@@ -1701,6 +1715,7 @@ class Engram(nn.Module):
             use_thp=engram_config.use_thp,
             disk_source=disk_source,
             disk_threads=engram_config.disk_threads,
+            disk_layer_id=layout.layer_ids[layer_hash_index],
         )
 
     def _init_staging(self, max_tokens: int, head_dim: int) -> None:
