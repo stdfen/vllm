@@ -208,6 +208,7 @@ class DiagnosticExtension:
 def _install_topk_probe():
     from vllm import _custom_ops as ops
     from vllm.model_executor.layers.sparse_attn_indexer import SparseAttnIndexer
+    from vllm.models.deepseek_v41.compressor import DeepseekCompressor
 
     current = ops.top_k_per_row_prefill
     original = getattr(current, "_diagnostic_original", current)
@@ -252,8 +253,68 @@ def _install_topk_probe():
     forward._diagnostic_original = original_forward
     SparseAttnIndexer.forward = forward
 
+    current_compressor = DeepseekCompressor.forward
+    original_compressor = getattr(
+        current_compressor, "_diagnostic_original", current_compressor
+    )
+
+    def compressor(module, *args, **kwargs):
+        if _ACTIVE is not None:
+            name = module.prefix[module.prefix.find("layers.") :]
+            _ACTIVE.record(name, "parameters", dict(module.named_parameters()))
+        return original_compressor(module, *args, **kwargs)
+
+    compressor._diagnostic_original = original_compressor
+    DeepseekCompressor.forward = compressor
+
+
+def _install_attention_probe():
+    from vllm.models.deepseek_v41.nvidia import flashinfer_sparse as backend
+
+    current = backend.flashinfer_trtllm_batch_decode_sparse_mla_dsv4
+    original = getattr(current, "_diagnostic_original", current)
+
+    def attention(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if _ACTIVE is None:
+            return result
+        call = getattr(_ACTIVE, "attention_call", 0)
+        _ACTIVE.attention_call = call + 1
+        if call not in _ACTIVE.layers:
+            return result
+        name = f"native_mla.{call}"
+        _ACTIVE.record(name, "output", kwargs["out"][-1:])
+        _ACTIVE.record(name, "query", kwargs["query"][-1:])
+        _ACTIVE.record(name, "sinks", kwargs.get("sinks"))
+        metadata = {}
+        for cache_key, indices_key in (
+            ("swa_kv_cache", "sparse_indices"),
+            ("compressed_kv_cache", "extra_sparse_indices"),
+        ):
+            cache, indices = kwargs.get(cache_key), kwargs.get(indices_key)
+            if cache is None or indices is None:
+                continue
+            index = indices.reshape(indices.shape[0], -1)[-1].long()
+            valid = (index >= 0) & (index < cache.shape[0] * cache.shape[1])
+            safe = index.masked_fill(~valid, 0)
+            selected = cache[safe // cache.shape[1], safe % cache.shape[1]]
+            selected = selected.masked_fill(
+                ~valid.reshape((-1,) + (1,) * (selected.ndim - 1)), 0
+            )
+            _ACTIVE.record(name, cache_key, selected.unsqueeze(0))
+            _ACTIVE.record(name, indices_key, (index.unsqueeze(0), valid.unsqueeze(0)))
+            metadata[cache_key] = dict(
+                shape=list(cache.shape), stride=list(cache.stride())
+            )
+        (_ACTIVE.directory / f"native-mla-{call}.json").write_text(json.dumps(metadata))
+        return result
+
+    attention._diagnostic_original = original
+    backend.flashinfer_trtllm_batch_decode_sparse_mla_dsv4 = attention
+
 
 _install_topk_probe()
+_install_attention_probe()
 
 for _previous in _PREVIOUS_EXTENSIONS:
     for _name in ("diagnostic_reload", "diagnostic_topk_probe"):
