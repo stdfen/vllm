@@ -4,18 +4,51 @@
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from vllm.config import set_current_vllm_config
 from vllm.models.deepseek_v4.nvidia.flashinfer_sparse import (
     _required_sm120_sparse_topk,
 )
+from vllm.platforms import current_platform
 from vllm.platforms.interface import DeviceCapability
 from vllm.utils import flashinfer as fi_utils
 from vllm.v1.attention.backends.mla.flashinfer_mla_sparse import (
     FlashInferMLASparseSM120Backend,
 )
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
+
+
+@pytest.mark.skipif(
+    not current_platform.is_device_capability_family(120),
+    reason="Tests the native SM12x sparse-attention ABI",
+)
+def test_dsv41_cache_geometry_matches_native_sm12x_metadata():
+    from vllm.models.deepseek_v41.nvidia.flashinfer_sparse import (
+        DeepseekV4FlashInferMLASparseBackend,
+        DeepseekV4FlashInferSM120Attention,
+    )
+    from vllm.utils.deep_gemm import (
+        get_paged_mqa_logits_metadata,
+        get_paged_mqa_page_sizes,
+    )
+    from vllm.v1.attention.backends.mla.indexer import DeepseekV41IndexerBackend
+
+    native_pages = set(get_paged_mqa_page_sizes())
+    common = native_pages.intersection(
+        DeepseekV4FlashInferMLASparseBackend.get_supported_kernel_block_sizes(),
+        DeepseekV41IndexerBackend.get_supported_kernel_block_sizes(),
+    )
+    assert common, "Attention/indexer declarations must admit a native KV page size"
+    assert DeepseekV4FlashInferSM120Attention.swa_cache_block_size in common
+    context_lens = torch.tensor([[128]], dtype=torch.int32, device="cuda")
+    num_sms = torch.cuda.get_device_properties(0).multi_processor_count
+    for page_size in common:
+        metadata = get_paged_mqa_logits_metadata(context_lens, page_size, num_sms)
+        torch.cuda.synchronize()
+        assert metadata.is_cuda
+        assert metadata.shape == (num_sms + 1, 2)
 
 
 def _fake_vllm_config(model_type: str) -> SimpleNamespace:
