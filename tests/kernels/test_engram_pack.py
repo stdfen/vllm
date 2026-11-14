@@ -5,6 +5,9 @@
 import copy
 import hashlib
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -171,3 +174,20 @@ def test_uma_budget_does_not_double_count_and_rejects_insufficient_memory(tmp_pa
             cache_bytes=0,
             reserve_bytes=0,
         )
+
+
+def test_uma_standalone_entrypoint_does_not_import_torch():
+    """The admission process must not consume UMA with a model-runtime import."""
+    from vllm.models.deepseek_v41.common import engram_preflight
+
+    script = Path(engram_preflight.__file__)
+    result = subprocess.run(
+        [sys.executable, "-X", "importtime", str(script), "--help"],
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    imported = {line.rsplit("|", 1)[-1].strip() for line in result.stderr.splitlines()}
+    assert "torch" not in imported
+    assert "vllm" not in imported
