@@ -1365,7 +1365,13 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
                         experts.load_shared_expert_weight(name, loaded_weight)
                     )
                     continue
-            if pad_shared_expert and ".shared_experts." in name:
+            if (
+                pad_shared_expert
+                and ".shared_experts." in name
+                and name.endswith((".weight", ".weight_scale_inv", ".weight_scale"))
+            ):
+                # EXL3 vectors and trellis tiles already encode their exact shapes;
+                # the native block-FP8 matrix padding is not applicable to them.
                 loaded_weight = self._pad_shared_expert_weight(
                     self.quant_config, name, loaded_weight
                 )
