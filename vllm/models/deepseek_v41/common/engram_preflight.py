@@ -4,15 +4,19 @@
 
 import argparse
 import hashlib
+import importlib
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from vllm.models.deepseek_v41.common.engram_pack import (
-    atomic_json,
-    canonical,
-    checkpoint_identity,
-    select_pack,
-)
+if TYPE_CHECKING:
+    from vllm.models.deepseek_v41.common import engram_pack as pack
+else:
+    # A standalone deployment check must not import vLLM/PyTorch first: their
+    # transient process memory can exceed the available UMA safety margin.
+    pack = importlib.import_module(
+        f"{__package__}.engram_pack" if __package__ else "engram_pack"
+    )
 
 GIB = 1 << 30
 
@@ -28,8 +32,8 @@ def common_recipe(recipe):
         "disk_stats_dir",
     ):
         config.pop(key, None)
-    argv[position] = canonical(config).decode()
-    return hashlib.sha256(canonical(argv)).hexdigest()
+    argv[position] = pack.canonical(config).decode()
+    return hashlib.sha256(pack.canonical(argv)).hexdigest()
 
 
 def memory_info(path=Path("/proc/meminfo")):
@@ -128,10 +132,10 @@ def main():
     parser.add_argument("--reserve-bytes", type=int, default=8 * GIB)
     parser.add_argument("--sampling-margin-bytes", type=int, default=4 * GIB)
     args = parser.parse_args()
-    identity = checkpoint_identity(args.model)
+    identity = pack.checkpoint_identity(args.model)
     recipe = json.loads(args.recipe.read_text())
     if args.calibrate_resources:
-        atomic_json(
+        pack.atomic_json(
             args.profile,
             calibrate(
                 args.calibrate_resources, identity, recipe, args.validated_context
@@ -163,7 +167,7 @@ def main():
         } != set(layers):
             raise ValueError("Preflight manifest does not cover all Engram layers")
         for record in manifest["packs"]:
-            select_pack(
+            pack.select_pack(
                 args.manifest,
                 args.model,
                 record["layer"],
