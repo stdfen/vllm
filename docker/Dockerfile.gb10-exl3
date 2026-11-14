@@ -1,6 +1,7 @@
 ARG BASE_IMAGE=vllm/vllm-openai:v0.33.0
 FROM ${BASE_IMAGE}
 USER root
+ENV CPATH=/usr/local/lib/python3.12/dist-packages/nvidia/cu13/include
 ENV VLLM_EXL3_DENSE_MROW=0 \
     VLLM_EXL3_MOE_SMOE=0 \
     VLLM_EXL3_MOE_FUSED_OPS=0 \
