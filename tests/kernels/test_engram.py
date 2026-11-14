@@ -19,6 +19,81 @@ from vllm.models.deepseek_v41.common.engram import (
 from vllm.platforms import current_platform
 
 
+@pytest.mark.skipif(
+    not current_platform.is_cuda(), reason="Checkpoint disk reader is a CUDA backend"
+)
+@pytest.mark.parametrize("packed", [False, True])
+def test_engram_disk_rows_refresh_on_graph_replay(dist_init, tmp_path, packed):
+    """Disk rows match the resident kernel, including new IDs on every replay."""
+    rows, dim = 36, 256
+    weight = (
+        ((torch.arange(rows * dim, device="cpu") % 31 - 15) / 8)
+        .reshape(rows, dim)
+        .to(torch.float8_e4m3fn)
+    )
+    scale = (
+        torch.tensor(
+            [0, 1, 126, 127, 128, 254, 255, 127], dtype=torch.uint8, device="cpu"
+        )
+        .expand(rows, -1)
+        .contiguous()
+    )
+    prefix = b"unaligned-source-prefix"
+    weight_file, scale_file = tmp_path / "weight.bin", tmp_path / "scale.bin"
+    weight_file.write_bytes(prefix + weight.view(torch.uint8).numpy().tobytes())
+    scale_file.write_bytes(prefix + scale.numpy().tobytes())
+    with torch.device("cuda"):
+        resident = ParallelEngramEmbedding(rows, dim, (17, 19), cpu_offload=False)
+        disk = ParallelEngramEmbedding(
+            rows,
+            dim,
+            (17, 19),
+            cpu_offload=True,
+            dp_shared_memory=False,
+            disk_source=(str(weight_file), len(prefix), str(scale_file), len(prefix)),
+            disk_threads=2,
+        )
+        disk._disk_reader.allocate_staging(8)
+        ids = torch.tensor([[0, 17], [16, 35], [0, 17], [-1, 36]], dtype=torch.int32)
+        dtype = torch.uint8 if packed else torch.bfloat16
+        width = dim + dim // 32 if packed else dim
+        actual = torch.empty(4, 2, width, dtype=dtype)
+        expected = torch.empty_like(actual)
+    resident.weight.data.copy_(weight)
+    resident.weight_scale_inv.data.copy_(scale)
+
+    def compare():
+        torch.cuda.synchronize()
+        if packed:
+            assert torch.equal(actual, expected)
+        else:
+            # The resident kernel defines scale 0/255 handling. Preserve its NaNs.
+            torch.testing.assert_close(actual, expected, rtol=0, atol=0, equal_nan=True)
+
+    for _ in range(3):
+        resident.lookup(ids, expected)
+        disk.lookup(ids, actual)
+        compare()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        disk.lookup(ids, actual)
+    for shift in range(5):
+        updated = torch.tensor(
+            [
+                [shift, 17 + shift],
+                [16 - shift, 35 - shift],
+                [shift, 17 + shift],
+                [-1, 36],
+            ],
+            dtype=torch.int32,
+            device="cuda",
+        )
+        ids.copy_(updated)
+        resident.lookup(ids, expected)
+        graph.replay()
+        compare()
+
+
 def _reference_engram_post_wkv(
     hidden_states,
     kv,
