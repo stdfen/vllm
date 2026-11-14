@@ -70,6 +70,10 @@ sources = [s for s in sources if not s.replace("\\\\", "/").endswith(excluded)]
     package_dir = Path(importlib.util.find_spec("vllm").origin).parent
     target = package_dir.parent / binaries[0].name
     shutil.copyfile(binaries[0], target)
+    shutil.copytree(
+        source / "exllamav3", package_dir.parent / "exllamav3", dirs_exist_ok=True
+    )
+    shutil.copyfile(source / "LICENSE", root.parent / "EXLLAMAV3-LICENSE")
     # Build the common Engram callback against the same headers and ABI.
     os.environ["TORCH_CUDA_ARCH_LIST"] = "12.1a"
     os.environ["MAX_JOBS"] = "4"
