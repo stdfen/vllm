@@ -15,6 +15,9 @@ LABEL ai.vllm.compat.upstream="4ba787ec9959e566d3b587a796dff07673324da5" \
 COPY vllm/ /usr/local/lib/python3.12/dist-packages/vllm/
 COPY docker/gb10_exl3/ /opt/vllm-033-compat/
 COPY inputs/exllamav3-v1.6.0-151539c7-source.tar.gz /opt/vllm-033-compat/inputs/
-RUN uv venv --system-site-packages /opt/vllm-033-compat/.venv \
+COPY inputs/marisa_trie-1.3.1-*.whl /opt/vllm-033-compat/inputs/
+RUN uv pip install --target /usr/local/lib/python3.12/dist-packages --no-index --no-deps \
+    /opt/vllm-033-compat/inputs/marisa_trie-1.3.1-*.whl \
+ && uv venv --system-site-packages /opt/vllm-033-compat/.venv \
  && /opt/vllm-033-compat/.venv/bin/python /opt/vllm-033-compat/build_native.py \
     /opt/vllm-033-compat/inputs/exllamav3-v1.6.0-151539c7-source.tar.gz

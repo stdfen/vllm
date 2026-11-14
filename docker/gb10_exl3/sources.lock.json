@@ -14,6 +14,8 @@
     "old_binary_reused": false
   },
   "compatibility_reference": {
+    "marisa_trie_arm64_wheel_version": "1.3.1",
+    "marisa_trie_arm64_wheel_sha256": "9688c7b45f744366a4ef661e399f24636ebe440d315ab35d768676c59c613186",
     "mixed_checkpoint_plugin_archive_sha256": "4ffe0dfbdd087a957fb403c86730bdafac271c3f99124bedd4e09836bf1aec2b",
     "mixed_checkpoint_plugin_origin": "archived vllm_exl3_moe from the previous image; no upstream revision available",
     "quantization_method": "deepseek_v41_exl3",
