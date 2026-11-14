@@ -37,6 +37,12 @@ class EngramConfig:
     cpu_offload: bool = True
     """Store embedding weights in pinned CPU memory for UVA lookup."""
 
+    disk_offload: bool = False
+    """Read DeepSeek V4.1 rows from this checkpoint instead of pinning tables."""
+
+    disk_threads: int = 32
+    """Persistent host reader threads per Engram layer."""
+
     embedding_across_dp: bool = False
     """Shard embeddings across TP and all DP ranks when enabled.
     Otherwise, each DP rank has a separate TP-sharded embedding replica."""
@@ -57,6 +63,18 @@ class EngramConfig:
 
     @model_validator(mode="after")
     def _validate_shared_memory(self) -> Self:
+        if self.disk_threads < 1:
+            raise ValueError("disk_threads must be >= 1")
+        if self.disk_offload and (
+            not self.cpu_offload
+            or self.dp_shared_memory
+            or self.use_thp
+            or self.embedding_across_dp
+        ):
+            raise ValueError(
+                "disk_offload requires cpu_offload=True, dp_shared_memory=False, "
+                "use_thp=False and embedding_across_dp=False"
+            )
         if self.dp_shared_memory and not self.cpu_offload:
             raise ValueError("dp_shared_memory requires cpu_offload=True")
         if self.use_thp and (not self.cpu_offload or self.dp_shared_memory):
@@ -72,6 +90,11 @@ class EngramConfig:
             if model_config is not None
             else None
         )
+        if self.disk_offload and (
+            model_config is None
+            or model_config.architecture != "DeepseekV41ForCausalLM"
+        ):
+            raise ValueError("disk_offload currently requires DeepSeek V4.1")
         if (
             model_config is None
             or field is None
@@ -87,6 +110,7 @@ class EngramConfig:
         if self.dp_shared_memory is None:
             self.dp_shared_memory = (
                 self.cpu_offload
+                and not self.disk_offload
                 and not self.use_thp
                 and parallel_config.data_parallel_size > 1
                 and not parallel_config.enable_elastic_ep
@@ -94,6 +118,12 @@ class EngramConfig:
 
     def verify_parallel_config(self, parallel_config: "ParallelConfig") -> None:
         """Reject unsupported embedding parallel topologies."""
+        if self.disk_offload and (
+            parallel_config.data_parallel_size != 1
+            or parallel_config.enable_expert_parallel
+            or parallel_config.pipeline_parallel_size != 1
+        ):
+            raise ValueError("disk_offload currently supports TP with DP1/PP1/no EP")
         if self.dp_shared_memory:
             if parallel_config.data_parallel_size <= 1:
                 raise ValueError("dp_shared_memory requires data_parallel_size > 1.")

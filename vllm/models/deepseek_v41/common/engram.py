@@ -970,6 +970,8 @@ class ParallelEngramEmbedding(nn.Module):
         cpu_offload: bool = False,
         dp_shared_memory: bool = False,
         use_thp: bool = False,
+        disk_source: tuple[str, int, str, int] | None = None,
+        disk_threads: int = 32,
     ) -> None:
         super().__init__()
         assert head_sizes and all(size > 0 for size in head_sizes)
@@ -977,7 +979,15 @@ class ParallelEngramEmbedding(nn.Module):
         self.cpu_offload = cpu_offload
         self.dp_shared_memory = dp_shared_memory
         self.use_thp = use_thp
+        self.disk_offload = disk_source is not None
+        self._disk_reader = None
         self.dp_size = get_engram_dp_size()
+        if self.disk_offload:
+            if self.dp_size != 1 or dp_shared_memory or use_thp or not cpu_offload:
+                raise ValueError("Engram disk compatibility requires private TP tables")
+            from .engram_disk import skip_table_load
+
+            self._weight_loader = skip_table_load
         if dp_shared_memory:
             if not cpu_offload:
                 raise ValueError("dp_shared_memory requires cpu_offload=True")
@@ -1058,7 +1068,23 @@ class ParallelEngramEmbedding(nn.Module):
                     "engram_vocab_start": row_start,
                 },
             )
-        if cpu_offload and not self.weight.is_meta:
+        if self.disk_offload:
+            from .engram_disk import CheckpointDiskReader
+
+            self._disk_reader = CheckpointDiskReader(
+                disk_source,
+                self.vocab_start_idx,
+                self.part_num_embeddings,
+                dim,
+                block_size,
+                disk_threads,
+            )
+            logger.info(
+                "Engram checkpoint disk reader: %s; %d local rows",
+                self._disk_reader.native.mode(),
+                self.part_num_embeddings,
+            )
+        elif cpu_offload and not self.weight.is_meta:
             # Constant dummy values avoid randomizing huge CPU lookup tables.
             set_weight_attrs(self.weight, {"dummy_weight_value": 1.0})
             # The ue8m0 encoding of scale 1.0 is exponent byte 127.
@@ -1079,6 +1105,11 @@ class ParallelEngramEmbedding(nn.Module):
 
     def _allocate_weights(self) -> tuple[torch.Tensor, torch.Tensor]:
         scale_dim = self.dim // self.block_size
+        if self.disk_offload:
+            return (
+                torch.empty(1, self.dim, dtype=torch.float8_e4m3fn, device="cpu"),
+                torch.empty(1, scale_dim, dtype=torch.uint8, device="cpu"),
+            )
         if torch.get_default_device().type == "meta" or not (
             self.cpu_offload or self.peer_rows
         ):
@@ -1184,6 +1215,9 @@ class ParallelEngramEmbedding(nn.Module):
 
         `background` limits the grid to leave SMs for concurrent work.
         """
+        if self._disk_reader is not None:
+            self._disk_reader.lookup(self, indices, out, background)
+            return
         rows = indices.shape[0] * self.part_n_hash_cols
         if not rows:
             return
@@ -1653,6 +1687,11 @@ class Engram(nn.Module):
     ) -> ParallelEngramEmbedding:
         engram_config = get_current_vllm_config().engram_config
         assert engram_config is not None
+        disk_source = None
+        if engram_config.disk_offload:
+            from .engram_disk import resolve_source
+
+            disk_source = resolve_source(layout.layer_ids[layer_hash_index])
         return ParallelEngramEmbedding(
             layout.num_embeddings[layer_hash_index],
             layout.head_dim,
@@ -1660,6 +1699,8 @@ class Engram(nn.Module):
             cpu_offload=engram_config.cpu_offload,
             dp_shared_memory=bool(engram_config.dp_shared_memory),
             use_thp=engram_config.use_thp,
+            disk_source=disk_source,
+            disk_threads=engram_config.disk_threads,
         )
 
     def _init_staging(self, max_tokens: int, head_dim: int) -> None:
@@ -1670,6 +1711,12 @@ class Engram(nn.Module):
             head_dim,
             dtype=torch.bfloat16,
         )
+        if self.embed_tokens._disk_reader is not None:
+            self.embed_tokens._disk_reader.allocate_staging(
+                max_tokens
+                * self.embed_tokens.dp_size
+                * self.embed_tokens.part_n_hash_cols
+            )
         if not self.embed_tokens.cpu_offload:
             self._prefetch_stream = None
             return

@@ -58,7 +58,9 @@ def deep_gemm_fp8_o_proj(
     kernel, one ``wo_a`` group per slot with the live groups first, so only
     the padding groups are sliced off.
     """
-    use_fp8 = wo_a.weight.dtype == torch.float8_e4m3fn
+    wo_a_weight = getattr(wo_a, "weight", None)
+    use_exl3 = hasattr(wo_a, "trellis")
+    use_fp8 = wo_a_weight is not None and wo_a_weight.dtype == torch.float8_e4m3fn
     if isinstance(o, QuantizedActivation):
         assert use_fp8
         o_proj_input, o_scale = o.data[:, :n_groups], o.scale[:, :n_groups]
@@ -93,8 +95,11 @@ def deep_gemm_fp8_o_proj(
             z,
             recipe=einsum_recipe,
         )
+    elif use_exl3:
+        z = wo_a.quant_method.apply(wo_a, o_proj_input).to(torch.bfloat16)
     else:
-        grouped_weight = wo_a.weight.view(n_groups, o_lora_rank, -1)
+        assert wo_a_weight is not None
+        grouped_weight = wo_a_weight.view(n_groups, o_lora_rank, -1)
         torch.bmm(
             o_proj_input.transpose(0, 1),
             grouped_weight.transpose(1, 2),
@@ -126,7 +131,8 @@ def rope_quant_unsupported_reason(layer: torch.nn.Module) -> str | None:
         return f"RopeQuant needs {_ROPE_QUANT_NUM_HEADS} local query heads"
     if layer.kv_cache_torch_dtype != torch.float8_e4m3fn:
         return "RopeQuant needs the per-tensor FP8 KV cache"
-    if layer.wo_a.weight.dtype != torch.float8_e4m3fn:
+    wo_a_weight = getattr(layer.wo_a, "weight", None)
+    if wo_a_weight is None or wo_a_weight.dtype != torch.float8_e4m3fn:
         return "RopeQuant needs an FP8 wo_a"
     return None
 

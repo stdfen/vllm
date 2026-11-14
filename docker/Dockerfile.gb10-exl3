@@ -1,0 +1,14 @@
+ARG BASE_IMAGE=vllm/vllm-openai:v0.33.0
+FROM ${BASE_IMAGE}
+USER root
+ARG SOURCE_COMMIT=uncommitted-development
+LABEL ai.vllm.compat.upstream="4ba787ec9959e566d3b587a796dff07673324da5" \
+      ai.vllm.compat.official-arm64-manifest="sha256:e3481489818d3e563cae517b84ab959cc8b69f85a9fbb771c189140131ffc65c" \
+      ai.vllm.compat.source-commit="${SOURCE_COMMIT}" \
+      ai.vllm.compat.scope="v033-exl3-gb10-tp2-common-base-no-p0"
+COPY vllm/ /usr/local/lib/python3.12/dist-packages/vllm/
+COPY docker/gb10_exl3/ /opt/vllm-033-compat/
+COPY inputs/exllamav3-v1.6.0-151539c7-source.tar.gz /opt/vllm-033-compat/inputs/
+RUN uv venv --system-site-packages /opt/vllm-033-compat/.venv \
+ && /opt/vllm-033-compat/.venv/bin/python /opt/vllm-033-compat/build_native.py \
+    /opt/vllm-033-compat/inputs/exllamav3-v1.6.0-151539c7-source.tar.gz

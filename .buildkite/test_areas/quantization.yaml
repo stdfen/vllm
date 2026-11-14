@@ -2,6 +2,17 @@ group: Quantization
 depends_on:
   - image-build
 steps:
+- label: ":nvidia: (H200 MIG 18GB) EXL3 checkpoint metadata"
+  device: h200_18gb
+  key: exl3-checkpoint-metadata
+  timeout_in_minutes: 10
+  source_file_dependencies:
+  - vllm/model_executor/layers/quantization/__init__.py
+  - vllm/model_executor/layers/quantization/exl3/
+  - tests/quantization/test_exl3_checkpoint.py
+  commands:
+  - pytest -v -s quantization/test_exl3_checkpoint.py
+
 # Disabled until torchao transitive dependencies are locked.
 # - label: ":nvidia: (H200 MIG 35GB) Quantization"
 #   device: h200_35gb

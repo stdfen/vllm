@@ -1,0 +1,21 @@
+{
+  "vllm_tag": "v0.33.0",
+  "vllm_commit": "4ba787ec9959e566d3b587a796dff07673324da5",
+  "official_image_index": "sha256:d825baf9ce4b1b6bfc5ecc7b79880c7e6748c65a72d697ce3d47607aafa84c6e",
+  "official_arm64_manifest": "sha256:e3481489818d3e563cae517b84ab959cc8b69f85a9fbb771c189140131ffc65c",
+  "official_image_config": "sha256:a0dfdeea1d42d4201c82d9bb44f2f4bb1ac2ef5aea196e9e0d1007a2834d2f70",
+  "exllamav3": {
+    "repository": "https://github.com/turboderp-org/exllamav3",
+    "revision": "151539c77abc7ab7425d30da7a4e8e3c5c154e7b",
+    "version": "1.6.0",
+    "archive_sha256": "73cdc89f493d3c28f66a8cc05ec50e8678817c4615314446ac1295c9f0908ba4",
+    "architecture": "12.1a",
+    "arm64_patch": "build_native.py and aarch64_cuda_only.cpp",
+    "old_binary_reused": false
+  },
+  "compatibility_reference": {
+    "installed_vllm_source_archive_sha256": "9af37c0a5492a19ea68dc6d05136929f25ae8d1019324355699ca3d9ba3a712d",
+    "native_engram_reader_sha256": "91d53d241d1a73da1a1f2883cdad52ba3026789de7748224cb44d45a5f9c170d"
+  },
+  "scope": "common A/B compatibility; no new P0 optimization is counted here"
+}

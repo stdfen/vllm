@@ -746,7 +746,14 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
         # DeepseekV4Attention._run_parallel_input_projections
         # (compressor kv_score, indexer.weights_proj). fused_wqa_wkv stays on
         # the default stream.
-        aux_stream_list = [torch.cuda.Stream() for _ in range(3)]
+        # EXL3's device-wide scratch/locks cannot be shared by concurrent
+        # projection streams. Other quantization backends keep their streams.
+        aux_stream_list = (
+            None
+            if vllm_config.quant_config is not None
+            and vllm_config.quant_config.get_name() == "exl3"
+            else [torch.cuda.Stream() for _ in range(3)]
+        )
         # Keep mHC independent of the streams used inside attention.
         mhc_stream = torch.cuda.Stream() if supports_mhc_overlap(vllm_config) else None
         self.fuse_mhc_all_reduce = mhc_stream is not None and supports_mhc_all_reduce(
@@ -1349,6 +1356,20 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
                 # Vision weights are loaded by the outer multimodal wrapper.
                 logger.warning_once("Skipping non-text weight: %s", name)
                 continue
+            grouped_match = re.search(
+                r"\.slice\.(\d+)\.(trellis|suh|svh|mul1|mcg)$", name
+            )
+            if grouped_match and name not in params_dict:
+                mapped = name[: grouped_match.start()] + "." + grouped_match.group(2)
+                if is_pp_missing_parameter(mapped, self):
+                    continue
+                param = params_dict[mapped]
+                loaded = param.weight_loader(
+                    param, loaded_weight, int(grouped_match.group(1))
+                )
+                if loaded is not False:
+                    loaded_params.add(mapped)
+                continue
             if ".shared_experts." in name:
                 if is_pp_missing_parameter(name, self):
                     continue
@@ -1554,6 +1575,11 @@ def _make_deepseek_v4_weights_mapper(
         orig_to_new_regex=scale_regex,
         orig_to_new_suffix={
             "head.weight": "lm_head.weight",
+            "head.trellis": "lm_head.trellis",
+            "head.suh": "lm_head.suh",
+            "head.svh": "lm_head.svh",
+            "head.mul1": "lm_head.mul1",
+            "head.mcg": "lm_head.mcg",
             "embed.weight": "embed_tokens.weight",
             ".ffn.gate.bias": ".ffn.gate.e_score_correction_bias",
         },
