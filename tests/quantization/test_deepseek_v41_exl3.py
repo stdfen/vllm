@@ -2,14 +2,26 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """The mixed checkpoint must retain FP8 settings and exact fractional EXL3 plans."""
 
+from pathlib import Path
+
 import pytest
 
+from vllm.config import ModelConfig
 from vllm.model_executor.layers.quantization import get_quantization_config
 from vllm.model_executor.layers.quantization.deepseek_v41_exl3.plan import (
     Exl3MoEPlan,
     PlanError,
     tp_shard,
 )
+
+
+def test_model_config_accepts_mixed_checkpoint_override_order(tmp_path):
+    fixture = Path(__file__).with_name("fixtures") / "deepseek_v41_exl3_config.json"
+    (tmp_path / "config.json").write_bytes(fixture.read_bytes())
+    config = ModelConfig(model=str(tmp_path), skip_tokenizer_init=True)
+    assert config.quantization == "deepseek_v41_exl3"
+    assert config.architecture == "DeepseekV41ForCausalLM"
+    assert config.hf_text_config.num_hidden_layers == 40
 
 
 def test_mixed_config_preserves_fp8_base_and_exl3_head():
