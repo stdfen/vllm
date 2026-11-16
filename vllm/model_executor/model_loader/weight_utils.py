@@ -273,6 +273,9 @@ def get_quant_config(
         if (
             model_config.quantization == "modelopt_mixed"
             and "quantized_layers" not in hf_quant_config
+        ) or (
+            model_config.quantization == "exl3"
+            and "tensor_storage" not in hf_quant_config
         ):
             pass  # fall through to file-based loading below
         else:
@@ -1120,6 +1123,7 @@ def safetensors_weights_iterator(
     *,
     safetensors_prefetch_num_threads: int = DEFAULT_SAFETENSORS_PREFETCH_NUM_THREADS,
     safetensors_prefetch_block_size: int = DEFAULT_SAFETENSORS_PREFETCH_BLOCK_SIZE,
+    skip_engram_tables: bool = False,
 ) -> Generator[tuple[str, torch.Tensor], None, None]:
     """Iterate over the weights in the model safetensor files.
 
@@ -1128,6 +1132,8 @@ def safetensors_weights_iterator(
     reduces storage I/O for MoE models under EP.
     """
     loading_desc = "Loading safetensors checkpoint shards"
+    if skip_engram_tables and safetensors_load_strategy not in (None, "lazy"):
+        raise ValueError("Disk Engram requires lazy safetensors loading")
     if safetensors_load_strategy == "eager":
         loading_desc += " (eager)"
 
@@ -1245,6 +1251,10 @@ def safetensors_weights_iterator(
                 for name in f.keys():  # noqa: SIM118
                     if should_skip_weight(name, local_expert_ids):
                         continue
+                    if skip_engram_tables and ".engram.embed." in name:
+                        if name.endswith((".weight", ".scale")):
+                            yield name, torch.empty(0)
+                            continue
                     param = f.get_tensor(name)
                     yield name, param
 

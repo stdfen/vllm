@@ -501,13 +501,11 @@ class VocabParallelEmbedding(PluggableLayer):
         # If param packed on the same dim we are sharding on, then
         # need to adjust offsets of loaded weight by pack_factor.
         if packed_dim is not None and packed_dim == output_dim:
-            packed_factor = (
-                param.packed_factor
-                if isinstance(param, BasevLLMParameter)
-                else param.pack_factor
-            )
+            packed_factor = getattr(param, "packed_factor", None)
+            if packed_factor is None:
+                packed_factor = param.pack_factor
             assert loaded_weight.shape[output_dim] == (
-                self.org_vocab_size // param.packed_factor
+                self.org_vocab_size // packed_factor
             )
             start_idx = start_idx // packed_factor
             shard_size = shard_size // packed_factor
@@ -516,8 +514,10 @@ class VocabParallelEmbedding(PluggableLayer):
 
         # Copy the data. Select chunk corresponding to current shard.
         loaded_weight = loaded_weight.narrow(output_dim, start_idx, shard_size)
-        param[: loaded_weight.shape[0]].data.copy_(loaded_weight)
-        param[loaded_weight.shape[0] :].data.fill_(0)
+        param.data.zero_()
+        param.data.narrow(output_dim, 0, loaded_weight.shape[output_dim]).copy_(
+            loaded_weight
+        )
 
     def forward(self, input_):
         """Look up IDs, optionally reducing contributions from vocabulary shards."""

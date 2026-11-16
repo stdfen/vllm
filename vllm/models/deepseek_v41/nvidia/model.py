@@ -1320,6 +1320,60 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
         logger.warning_once("Decoder SWA bounded replay is off: %s.", reason)
         return False
 
+    def _restore_native_exl3_projections(self, weights, params, stacked_mapping):
+        pending = {}
+        roles = {"trellis", "suh", "svh", "mul1"}
+        for name, tensor in weights:
+            prefix, _, role = name.rpartition(".")
+            target = name
+            for fused, original, _ in stacked_mapping:
+                if original in target and ".experts." not in target:
+                    target = target.replace(original, fused)
+                    break
+            target_prefix = target.rpartition(".")[0]
+            if (
+                role not in roles
+                or target in params
+                or f"{target_prefix}.weight" not in params
+            ):
+                yield name, tensor
+                continue
+            pieces = pending.setdefault(prefix, {})
+            pieces[role] = tensor
+            if pieces.keys() != roles:
+                continue
+            from vllm.model_executor.layers.quantization.exl3.runtime import (
+                create_exl3_linear_backend,
+            )
+
+            trellis = pieces["trellis"].cuda()
+            inputs = trellis.shape[0] * 16
+            outputs = trellis.shape[1] * 16
+            backend = create_exl3_linear_backend(
+                trellis=trellis,
+                suh=pieces["suh"].cuda(),
+                svh=pieces["svh"].cuda(),
+                marker=pieces["mul1"].cuda(),
+                bits=trellis.shape[2] // 16,
+                codebook="mul1",
+            )
+            restored = torch.empty(
+                outputs, inputs, dtype=torch.bfloat16, device=trellis.device
+            )
+            block = 128
+            basis = torch.zeros(block, inputs, dtype=torch.float16, device=trellis.device)
+            diagonal = torch.arange(block, device=trellis.device)
+            for start in range(0, inputs, block):
+                basis.zero_()
+                count = min(block, inputs - start)
+                basis[diagonal[:count], start + diagonal[:count]] = 1
+                restored[:, start : start + count] = backend(basis)[:count].T
+            yield f"{prefix}.weight", restored
+            del pending[prefix]
+        if pending:
+            raise ValueError(f"Incomplete native EXL3 projections: {sorted(pending)}")
+
+
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         stacked_params_mapping = [
             # (param_name, shard_name, shard_id)
@@ -1344,7 +1398,23 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
             and not self.use_sequence_parallel
         )
 
+        weights = self._restore_native_exl3_projections(
+            weights, params_dict, stacked_params_mapping
+        )
         for name, loaded_weight in weights:
+            grouped_piece = re.match(
+                r"^(.*\.attn\.wo_a)\.slice\.(\d+)\.(trellis|suh|svh|mul1|mcg)$",
+                name,
+            )
+            if grouped_piece is not None:
+                module_name, slice_id, piece = grouped_piece.groups()
+                parameter_name = f"{module_name}.{piece}"
+                if is_pp_missing_parameter(parameter_name, self):
+                    continue
+                parameter = params_dict[parameter_name]
+                parameter.weight_loader(parameter, loaded_weight, int(slice_id))
+                loaded_params.add(parameter_name)
+                continue
             if name.startswith(("vision.", "aligner.", "image_")):
                 # Vision weights are loaded by the outer multimodal wrapper.
                 logger.warning_once("Skipping non-text weight: %s", name)
@@ -1459,6 +1529,8 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
             1 if name.endswith(("weight_scale_inv", "weight_scale")) else block_size[0]
         )
         dim = 1 if ".down_proj." in name else 0
+        if loaded_weight.dim() <= dim:
+            return loaded_weight
         mult = get_tensor_model_parallel_world_size() * step
         pad = cdiv(loaded_weight.shape[dim], mult) * mult - loaded_weight.shape[dim]
         if pad == 0:
@@ -1544,6 +1616,7 @@ def _make_deepseek_v4_weights_mapper(
             re.compile(r"(engram\.embed)\.scale$"): r"\1_tokens.weight_scale_inv",
             re.compile(r"\.scale$"): f".{linear_scale_name}",
         }
+    scale_regex[re.compile(r"^head\.(trellis|suh|svh|mul1|mcg)$")] = r"lm_head.\1"
     return WeightsMapper(
         orig_to_new_prefix={
             "layers.": "model.layers.",
@@ -1649,6 +1722,7 @@ class DeepseekV41LLMForCausalLM(
             self.lm_head = ParallelLMHead(
                 config.vocab_size,
                 config.hidden_size,
+                quant_config=vllm_config.quant_config,
                 prefix=maybe_prefix(prefix, "lm_head"),
             )
         else:

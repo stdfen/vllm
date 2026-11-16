@@ -55,8 +55,29 @@ class EngramConfig:
     startup takes longer. Requires cpu_offload without dp_shared_memory.
     Always on for private tables on ROCm."""
 
+    disk_offload: bool = False
+    """Read checkpoint rows on demand without allocating the full table."""
+
+    disk_threads: int = 32
+    """Reader threads per disk-backed table."""
+
+    table_dir: str | None = None
+    """Optional native checkpoint containing disk-backed Engram tensors."""
+
+    disk_cache_rows: int = 0
+    """Hot rows retained per disk-backed table."""
+
     @model_validator(mode="after")
     def _validate_shared_memory(self) -> Self:
+        if self.disk_offload and (
+            not self.cpu_offload
+            or self.dp_shared_memory
+            or self.use_thp
+            or self.embedding_across_dp
+        ):
+            raise ValueError("disk_offload requires private CPU offload without THP or DP")
+        if self.disk_threads < 1 or self.disk_cache_rows < 0:
+            raise ValueError("disk_threads must be >= 1 and disk_cache_rows >= 0")
         if self.dp_shared_memory and not self.cpu_offload:
             raise ValueError("dp_shared_memory requires cpu_offload=True")
         if self.use_thp and (not self.cpu_offload or self.dp_shared_memory):
@@ -88,6 +109,7 @@ class EngramConfig:
             self.dp_shared_memory = (
                 self.cpu_offload
                 and not self.use_thp
+                and not self.disk_offload
                 and parallel_config.data_parallel_size > 1
                 and not parallel_config.enable_elastic_ep
             )

@@ -58,6 +58,21 @@ def deep_gemm_fp8_o_proj(
     kernel, one ``wo_a`` group per slot with the live groups first, so only
     the padding groups are sliced off.
     """
+    grouped_bmm = getattr(wo_a, "grouped_bmm", None)
+    if grouped_bmm is not None and not isinstance(o, QuantizedActivation):
+        o_rot, _ = fused_inv_rope_fp8_quant(
+            o,
+            positions,
+            cos_sin_cache,
+            n_groups=n_groups,
+            heads_per_group=heads_per_group,
+            nope_dim=nope_dim,
+            rope_dim=rope_dim,
+            quant_group_size=einsum_recipe[2],
+            tma_aligned_scales=tma_aligned_scales,
+            quantize=False,
+        )
+        return wo_b(grouped_bmm(o_rot).flatten(1))
     use_fp8 = wo_a.weight.dtype == torch.float8_e4m3fn
     if isinstance(o, QuantizedActivation):
         assert use_fp8

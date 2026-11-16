@@ -68,6 +68,11 @@ from vllm.model_executor.layers.linear import ColumnParallelLinear
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.quantization.utils.quant_utils import kMxfp8Dynamic
 from vllm.model_executor.utils import set_weight_attrs
+from vllm.models.deepseek_v41.common.engram_disk import (
+    DiskEngramMixin,
+    disk_weight_loader,
+    resolve_disk_source,
+)
 from vllm.models.deepseek_v41.common.ops.query_quant import (
     can_fuse_query_quant,
     mxfp8_scale_bytes,
@@ -950,7 +955,7 @@ def _allocate_huge_page_storage(num_bytes: int) -> torch.Tensor | None:
     return tensor
 
 
-class ParallelEngramEmbedding(nn.Module):
+class ParallelEngramEmbedding(DiskEngramMixin, nn.Module):
     """Hash heads with FP8 rows and per-block E8M0 scales.
 
     Heads are TP-sharded, and additionally DP-sharded across a node-local
@@ -970,11 +975,19 @@ class ParallelEngramEmbedding(nn.Module):
         cpu_offload: bool = False,
         dp_shared_memory: bool = False,
         use_thp: bool = False,
+        disk_source: tuple[str, int, str, int] | None = None,
+        disk_threads: int = 32,
+        disk_cache_rows: int = 0,
     ) -> None:
         super().__init__()
         assert head_sizes and all(size > 0 for size in head_sizes)
         assert sum(head_sizes) <= num_embeddings
         self.cpu_offload = cpu_offload
+        self.disk_offload = disk_source is not None
+        if self.disk_offload:
+            if not cpu_offload or dp_shared_memory or use_thp:
+                raise ValueError("Disk Engram requires private CPU offload without THP")
+            self._weight_loader = disk_weight_loader
         self.dp_shared_memory = dp_shared_memory
         self.use_thp = use_thp
         self.dp_size = get_engram_dp_size()
@@ -1048,6 +1061,7 @@ class ParallelEngramEmbedding(nn.Module):
             torch.accelerator.current_device_index()
         ).multi_processor_count
         weight, scales = self._allocate_weights()
+        self._init_disk_reader(disk_source, disk_threads, disk_cache_rows)
         self.weight = nn.Parameter(weight, requires_grad=False)
         self.weight_scale_inv = nn.Parameter(scales, requires_grad=False)
         for param in (self.weight, self.weight_scale_inv):
@@ -1058,7 +1072,7 @@ class ParallelEngramEmbedding(nn.Module):
                     "engram_vocab_start": row_start,
                 },
             )
-        if cpu_offload and not self.weight.is_meta:
+        if cpu_offload and not self.disk_offload and not self.weight.is_meta:
             # Constant dummy values avoid randomizing huge CPU lookup tables.
             set_weight_attrs(self.weight, {"dummy_weight_value": 1.0})
             # The ue8m0 encoding of scale 1.0 is exponent byte 127.
@@ -1079,6 +1093,11 @@ class ParallelEngramEmbedding(nn.Module):
 
     def _allocate_weights(self) -> tuple[torch.Tensor, torch.Tensor]:
         scale_dim = self.dim // self.block_size
+        if self.disk_offload:
+            return (
+                torch.empty(0, self.dim, dtype=torch.float8_e4m3fn, device="cpu"),
+                torch.empty(0, scale_dim, dtype=torch.uint8, device="cpu"),
+            )
         if torch.get_default_device().type == "meta" or not (
             self.cpu_offload or self.peer_rows
         ):
@@ -1186,6 +1205,9 @@ class ParallelEngramEmbedding(nn.Module):
         """
         rows = indices.shape[0] * self.part_n_hash_cols
         if not rows:
+            return
+        if self.disk_offload:
+            self._disk_lookup(indices, out, background, _engram_lookup_kernel)
             return
         weight, scales = self._storage()
         ids_stride_t, ids_stride_h = indices.stride()
@@ -1660,6 +1682,13 @@ class Engram(nn.Module):
             cpu_offload=engram_config.cpu_offload,
             dp_shared_memory=bool(engram_config.dp_shared_memory),
             use_thp=engram_config.use_thp,
+            disk_source=(
+                resolve_disk_source(layout.layer_ids[layer_hash_index])
+                if engram_config.disk_offload
+                else None
+            ),
+            disk_threads=engram_config.disk_threads,
+            disk_cache_rows=engram_config.disk_cache_rows,
         )
 
     def _init_staging(self, max_tokens: int, head_dim: int) -> None:
@@ -1673,6 +1702,9 @@ class Engram(nn.Module):
         if not self.embed_tokens.cpu_offload:
             self._prefetch_stream = None
             return
+        self.embed_tokens.init_disk_staging(
+            max_tokens * self.embed_tokens.dp_size * self.embed_tokens.part_n_hash_cols
+        )
         if self._prefetch_stream is None:
             self._prefetch_stream = torch.cuda.Stream(device=self.staged_rows.device)
         self._prefetch_done = torch.cuda.Event()

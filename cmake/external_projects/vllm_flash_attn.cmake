@@ -88,19 +88,6 @@ endforeach()
 add_custom_target(_vllm_fa4_cutedsl_C)
 
 # Install flash_attn/cute directory (needed for FA4).
-# When using a local source dir (VLLM_FLASH_ATTN_SRC_DIR), create a symlink
-# so edits to cute-dsl Python files take effect immediately without rebuilding.
-# Otherwise, copy files and transform flash_attn.cute imports to
-# vllm.vllm_flash_attn.cute to match our package structure.
-if(VLLM_FLASH_ATTN_SRC_DIR)
-  install(CODE "
-    set(LINK_TARGET \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute\")
-    set(LINK_NAME \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn/cute\")
-    file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/vllm/vllm_flash_attn\")
-    file(REMOVE_RECURSE \"\${LINK_NAME}\")
-    file(CREATE_LINK \"\${LINK_TARGET}\" \"\${LINK_NAME}\" SYMBOLIC)
-  " COMPONENT _vllm_fa4_cutedsl_C)
-else()
   install(CODE "
     file(GLOB_RECURSE CUTE_PY_FILES \"${vllm-flash-attn_SOURCE_DIR}/flash_attn/cute/*.py\")
     foreach(SRC_FILE \${CUTE_PY_FILES})
@@ -109,8 +96,8 @@ else()
       get_filename_component(DST_DIR \${DST_FILE} DIRECTORY)
       file(MAKE_DIRECTORY \${DST_DIR})
       file(READ \${SRC_FILE} FILE_CONTENTS)
+      string(REGEX REPLACE \"(vllm[.]vllm_)+flash_attn[.]cute\" \"flash_attn.cute\" FILE_CONTENTS \"\${FILE_CONTENTS}\")
       string(REPLACE \"flash_attn.cute\" \"vllm.vllm_flash_attn.cute\" FILE_CONTENTS \"\${FILE_CONTENTS}\")
       file(WRITE \${DST_FILE} \"\${FILE_CONTENTS}\")
     endforeach()
   " COMPONENT _vllm_fa4_cutedsl_C)
-endif()

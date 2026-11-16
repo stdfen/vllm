@@ -729,6 +729,8 @@ def get_paged_mqa_logits_metadata(
         return _missing()
     next_n = context_lens.shape[1] if context_lens.dim() == 2 else 1
     num_slots = _paged_mqa_logits_schedule_slots(num_sms, next_n)
+    if current_platform.is_device_capability_family(120) and block_size == 128:
+        block_size = 64
     kwargs = {} if indices is None else {"indices": indices}
     return _get_paged_mqa_logits_metadata_impl(
         context_lens, block_size, num_slots, **kwargs
@@ -779,6 +781,18 @@ def fp8_fp4_paged_mqa_logits(
     _lazy_init()
     if _fp8_fp4_paged_mqa_logits_impl is None:
         return _missing()
+    if (
+        current_platform.is_device_capability_family(120)
+        and kv_cache.shape[1] == 128
+    ):
+        num_blocks, _, num_heads, record_bytes = kv_cache.shape
+        assert num_heads == 1 and record_bytes == 132 and q[1] is None
+        packed = kv_cache.reshape(num_blocks, -1)
+        values = packed[:, : 128 * 128].reshape(num_blocks, 2, 64 * 128)
+        scales = packed[:, 128 * 128 :].reshape(num_blocks, 2, 64 * 4)
+        kv_cache = torch.cat((values, scales), dim=-1).reshape(-1, 64, 1, 132)
+        offsets = torch.arange(2, device=block_tables.device, dtype=block_tables.dtype)
+        block_tables = (block_tables.unsqueeze(-1) * 2 + offsets).flatten(-2)
     # DeepGEMM asserts block_tables.stride(-1)==1. A trailing size-1 dim
     # (e.g. block_table shape [B,1] for short seqs under a large block_size)
     # can be a transposed view where .contiguous() is a no-op (torch treats the

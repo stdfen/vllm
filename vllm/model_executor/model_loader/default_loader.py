@@ -335,11 +335,16 @@ class DefaultModelLoader(BaseModelLoader):
                         ),
                     )
                 else:
+                    vllm_config = get_current_vllm_config_or_none()
+                    engram_config = vllm_config.engram_config if vllm_config else None
                     weights_iterator = safetensors_weights_iterator(
                         hf_weights_files,
                         self.load_config.use_tqdm_on_load,
                         self.load_config.safetensors_load_strategy,
                         local_expert_ids=self.local_expert_ids,
+                        skip_engram_tables=bool(
+                            engram_config and engram_config.disk_offload
+                        ),
                         safetensors_prefetch_num_threads=(
                             self.load_config.safetensors_prefetch_num_threads
                         ),

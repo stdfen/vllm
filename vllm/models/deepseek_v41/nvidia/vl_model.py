@@ -19,6 +19,7 @@ Thin multimodal wrapper around the text-only ``DeepseekV41LLMForCausalLM``:
 from collections.abc import Iterable
 from typing import Annotated
 
+import regex as re
 import torch
 from torch import nn
 
@@ -95,7 +96,16 @@ def _make_deepseek_v4_vl_weights_mapper(
     }
     return WeightsMapper(
         orig_to_new_prefix=orig_to_new_prefix,
-        orig_to_new_regex=base.orig_to_new_regex,
+        orig_to_new_regex={
+            **{
+                pattern: replacement
+                for pattern, replacement in base.orig_to_new_regex.items()
+                if pattern.pattern != r"^head\.(trellis|suh|svh|mul1|mcg)$"
+            },
+            re.compile(r"^head\.(trellis|suh|svh|mul1|mcg)$"): (
+                r"language_model.lm_head.\1"
+            ),
+        },
         orig_to_new_suffix={
             "head.weight": "language_model.lm_head.weight",
             "embed.weight": "embed_tokens.weight",
