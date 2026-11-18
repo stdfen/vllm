@@ -5,6 +5,8 @@
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
+import os
+
 import torch
 
 from vllm.config import VllmConfig
@@ -46,8 +48,16 @@ def supports_mhc_overlap(vllm_config: VllmConfig) -> bool:
     config = vllm_config.model_config.hf_config
     # DeepGEMM's prenorm kernel requires K % 64 == 0, N % 8 == 0, and N <= 32.
     mix_size = config.hc_mult * (config.hc_mult + 2)
+    # VLLM_DSV41_MHC_OVERLAP=1 also admits family-120 Blackwell (GB10): DeepGEMM's
+    # tf32_hc_prenorm_gemm has an sm120 build and the split pre-norm epilogue is the
+    # TileLang kernel the default path already runs there. Not bit-identical to the
+    # fused TileLang path (suodingX patch 0014): re-run the oracle before shipping.
+    family = current_platform.is_device_capability_family(100) or (
+        os.environ.get("VLLM_DSV41_MHC_OVERLAP", "0") == "1"
+        and current_platform.is_device_capability_family(120)
+    )
     return (
-        current_platform.is_device_capability_family(100)
+        family
         and is_deep_gemm_supported()
         and config.hidden_size % 64 == 0
         and 0 < mix_size <= 32

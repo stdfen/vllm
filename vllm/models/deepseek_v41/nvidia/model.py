@@ -1460,6 +1460,10 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
         )
         dim = 1 if ".down_proj." in name else 0
         if loaded_weight.dim() <= dim:
+            # Not a [rows, cols] weight (e.g. a quantization plugin's sign
+            # vectors or scalars): nothing to pad along the intermediate axis.
+            return loaded_weight
+        if loaded_weight.dim() <= dim:
             return loaded_weight
         mult = get_tensor_model_parallel_world_size() * step
         pad = cdiv(loaded_weight.shape[dim], mult) * mult - loaded_weight.shape[dim]
@@ -1706,6 +1710,17 @@ class DeepseekV41LLMForCausalLM(
     ) -> torch.Tensor:
         return self.logits_processor(self.lm_head, hidden_states, skip_gather=True)
 
+    def compute_logits_argmax(
+        self,
+        hidden_states: torch.Tensor,
+    ) -> torch.Tensor:
+        """[rows] int64: the first index of each row's maximum in
+        compute_logits(hidden_states) (rows without NaN), without all-gathering
+        the logits (VLLM_GREEDY_LOCAL_ARGMAX). Each rank takes the max and argmax
+        of its own vocabulary columns, padding masked, and all-gathers one
+        (value, index) pair per row (LogitsProcessor.get_top_tokens)."""
+        return self.logits_processor.get_top_tokens(self.lm_head, hidden_states)
+
     def build_specialized_decode(self) -> "SpecializedDecode":
         from .specialized_decode.logits.logits import SpecializedDecodeLogitsProcessor
         from .specialized_decode.runtime.decode import SpecializedDecode
@@ -1787,6 +1802,15 @@ class DeepseekV41LLMForCausalLM(
 
     def process_weights_after_loading(self) -> None:
         self.model.finalize_mhc_broadcast_weights()
+        # An out-of-tree quant plugin may prefetch per-layer weights into L2
+        # (vllm_exl3_moe: the mHC mix weights and router gates); a no-op
+        # unless that plugin is installed and its prefetch is switched on.
+        try:
+            from vllm_exl3_moe.l2pf import register_decoder_layers
+        except ImportError:
+            register_decoder_layers = None
+        if register_decoder_layers is not None:
+            register_decoder_layers(self.model)
 
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
         return self.model.get_expert_mapping()

@@ -216,8 +216,26 @@ if TYPE_CHECKING:
     VLLM_KIMI_K3_SHARD_SP_SHARED_EXPERT: bool = False
     VLLM_KIMI_K3_AUX_ATTN_RES_STREAM: bool = False
     VLLM_KIMI_K3_GEMM_AR: bool = True
-    VLLM_ENABLE_GEMM_RS: bool = False
     VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER: bool = True
+    VLLM_ENABLE_GEMM_RS: bool = False
+    # The DeepSeek-V4.1 recipe's knobs (plugins/sudoingx_exl3). They are read with
+    # os.environ in the plugin and the model code; declared here only so vLLM's
+    # unknown-variable check does not warn on a correctly configured serve.
+    VLLM_DSV41_MHC_OVERLAP: bool = False
+    VLLM_DSV41_SWA_BATCH: bool = False
+    VLLM_DSV41_ROPE_CAP: int | None = None
+    VLLM_INDEXER_PREFILL_BUFFER_FACTOR: int | None = None
+    VLLM_DSPARK_DEPTH_POLICY: str = ""
+    VLLM_DSPARK_DEPTH_FUSED: bool = False
+    VLLM_DSPARK_ROUND_MS: str = ""
+    VLLM_DSPARK_DRAFT_MS: float = 0.0
+    VLLM_DSPARK_MAIN_PROJ_ROWPAR: bool = False
+    VLLM_DSPARK_CONTEXT_KV_GROUPED: bool = False
+    VLLM_GREEDY_LOCAL_ARGMAX: bool = False
+    VLLM_DSPARK_OWN_HEAD: bool = False
+    VLLM_SHORT_CTX_BOUNDS: str = ""
+    VLLM_EXL3_MOE_TF_PROMPT: bool = False
+    VLLM_ENGRAM_WKV_ROWPAR: bool = False
     VLLM_USE_FLASHINFER_MOE_INT4: bool = False
     VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR: str | None = None
     VLLM_FLASHINFER_AUTOTUNE_SKIP_OPS: list[str] | None = None
@@ -1672,6 +1690,21 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # attention/shared-expert projections, DeepSeek-V4.1 ``wo_b``). All TP
     # ranks must belong to one NVLink domain.
     "VLLM_ENABLE_GEMM_RS": lambda: bool(int(os.getenv("VLLM_ENABLE_GEMM_RS", "0"))),
+    "VLLM_DSV41_MHC_OVERLAP": lambda: bool(os.getenv("VLLM_DSV41_MHC_OVERLAP", "0") in ("1", "true", "True")),
+    "VLLM_DSV41_SWA_BATCH": lambda: bool(int(os.getenv("VLLM_DSV41_SWA_BATCH", "0"))),
+    "VLLM_DSV41_ROPE_CAP": lambda: int(os.getenv("VLLM_DSV41_ROPE_CAP", "1")),
+    "VLLM_INDEXER_PREFILL_BUFFER_FACTOR": lambda: int(os.getenv("VLLM_INDEXER_PREFILL_BUFFER_FACTOR", "40")),
+    "VLLM_DSPARK_DEPTH_POLICY": lambda: os.getenv("VLLM_DSPARK_DEPTH_POLICY", ""),
+    "VLLM_DSPARK_DEPTH_FUSED": lambda: bool(int(os.getenv("VLLM_DSPARK_DEPTH_FUSED", "0"))),
+    "VLLM_DSPARK_ROUND_MS": lambda: os.getenv("VLLM_DSPARK_ROUND_MS", ""),
+    "VLLM_DSPARK_DRAFT_MS": lambda: float(os.getenv("VLLM_DSPARK_DRAFT_MS", "0") or 0),
+    "VLLM_DSPARK_MAIN_PROJ_ROWPAR": lambda: bool(int(os.getenv("VLLM_DSPARK_MAIN_PROJ_ROWPAR", "0"))),
+    "VLLM_DSPARK_CONTEXT_KV_GROUPED": lambda: bool(int(os.getenv("VLLM_DSPARK_CONTEXT_KV_GROUPED", "0"))),
+    "VLLM_GREEDY_LOCAL_ARGMAX": lambda: bool(int(os.getenv("VLLM_GREEDY_LOCAL_ARGMAX", "0"))),
+    "VLLM_DSPARK_OWN_HEAD": lambda: bool(int(os.getenv("VLLM_DSPARK_OWN_HEAD", "0"))),
+    "VLLM_SHORT_CTX_BOUNDS": lambda: os.getenv("VLLM_SHORT_CTX_BOUNDS", ""),
+    "VLLM_EXL3_MOE_TF_PROMPT": lambda: bool(int(os.getenv("VLLM_EXL3_MOE_TF_PROMPT", "0"))),
+    "VLLM_ENGRAM_WKV_ROWPAR": lambda: bool(int(os.getenv("VLLM_ENGRAM_WKV_ROWPAR", "0"))),
     # Allow use of FlashInfer FP8 block-scale GEMM for linear layers.
     # This uses TensorRT-LLM kernels and requires SM90+ (Hopper).
     "VLLM_BLOCKSCALE_FP8_GEMM_FLASHINFER": lambda: bool(
