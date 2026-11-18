@@ -456,6 +456,17 @@ def _marlin_gemm(
 ) -> torch.Tensor:
     if workspace is None:
         workspace = get_marlin_workspace(a.device)
+    native_schema = str(torch.ops._C.marlin_gemm.default._schema)
+    if "Tensor? a_scales" not in native_schema:
+        # The retained precompiled kernel has no activation-scale argument.
+        # MXFP8's current path passes None; never silently discard real scales.
+        if a_scales is not None:
+            raise RuntimeError("native Marlin GEMM lacks activation-scale support")
+        return torch.ops._C.marlin_gemm(
+            a, None, b_q_weight, b_bias, b_scales, global_scale, b_zeros,
+            workspace, b_q_type_id, size_m, size_n, size_k,
+            use_atomic_add, use_fp32_reduce, is_zp_float,
+        )
     return torch.ops._C.marlin_gemm(
         a,
         None,

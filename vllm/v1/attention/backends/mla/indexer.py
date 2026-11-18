@@ -364,7 +364,14 @@ class DeepseekV41IndexerBackend(DeepseekV4IndexerBackend):
 
     @staticmethod
     def get_supported_kernel_block_sizes(kv_cache_spec=None) -> list[int | MultipleOf]:
-        return [64 if current_platform.is_device_capability_family(90) else 128]
+        if current_platform.is_device_capability_family(90):
+            return [64]
+        if current_platform.is_cuda() and (
+            current_platform.is_device_capability_family(120)
+            or current_platform.is_device_capability_family(121)
+        ):
+            return [64, 128]
+        return [128]
 
 
 @dataclass(frozen=True)

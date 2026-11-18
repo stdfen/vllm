@@ -43,9 +43,10 @@ def _download_flashinfer_kernels(dry_run: bool) -> int:
         cmd.append("install-cubin-wheel")
     if dry_run:
         cmd.append("--dry-run")
-    # FlashInfer refuses to import while kernels from another FlashInfer version
-    # are installed, which would stop its own CLI from replacing them.
-    env = {**os.environ, "FLASHINFER_DISABLE_VERSION_CHECK": "1"}
+    # Ignore incompatible providers rather than loading an older shim with a
+    # potentially incompatible API when version checks are disabled.
+    env = os.environ.copy()
+    env.pop("FLASHINFER_DISABLE_VERSION_CHECK", None)
     return subprocess.run(cmd, env=env, check=False).returncode
 
 

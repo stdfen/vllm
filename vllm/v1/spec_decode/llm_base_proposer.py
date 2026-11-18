@@ -1513,7 +1513,11 @@ class SpecDecodeBaseProposer:
         the target model's LM head with the draft model to save memory.
         """
         share_lm_head = False
-        if hasattr(self.model, "has_own_lm_head"):
+        if getattr(self.model, "keeps_own_lm_head", False):
+            # Keep processing shared auxiliary buffers below; only head aliasing
+            # is suppressed for models with an independent packed head.
+            pass
+        elif hasattr(self.model, "has_own_lm_head"):
             # EAGLE model
             if not self.model.has_own_lm_head:
                 share_lm_head = True

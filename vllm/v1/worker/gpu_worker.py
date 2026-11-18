@@ -509,6 +509,10 @@ class Worker(WorkerBase):
                 current_platform.dist_backend,
             )
 
+            from vllm.v1.worker.progress_heartbeat import start_liveness
+
+            start_liveness(self.rank)
+
             if self.use_v2_model_runner:
                 logger.info_once("Using V2 Model Runner")
             warn_if_flashinfer_kernels_missing()
@@ -592,6 +596,9 @@ class Worker(WorkerBase):
     # FIXME(youkaichao & ywang96): Use TorchDispatchMode instead of memory pool
     # to hijack tensor allocation.
     def load_model(self, *, load_dummy_weights: bool = False) -> None:
+        from vllm.v1.worker.progress_heartbeat import beat
+
+        beat("load_model_start", force=True)
         with (
             self._maybe_get_memory_pool_context(tag="weights"),
             set_current_vllm_config(self.vllm_config),
@@ -599,6 +606,7 @@ class Worker(WorkerBase):
             self._scoped_allocator_max_split(max_split_size_mb=20),
         ):
             self.model_runner.load_model(load_dummy_weights=load_dummy_weights)
+        beat("load_model_complete", force=True)
 
         if has_ec_transfer():
             get_ec_transfer().start_worker_services()
@@ -651,6 +659,9 @@ class Worker(WorkerBase):
             by adjusting the `gpu_memory_utilization` parameter.
 
         """
+        from vllm.v1.worker.progress_heartbeat import beat
+
+        beat("memory_profile_start", force=True)
         maybe_apply_startup_plan(self)
 
         if kv_cache_memory_bytes := self.cache_config.kv_cache_memory_bytes:
@@ -1327,13 +1338,23 @@ class Worker(WorkerBase):
     def sample_tokens(
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput:
-        return self.model_runner.sample_tokens(grammar_output)
+        from vllm.v1.worker.progress_heartbeat import beat, gpu_completed
+
+        beat("sample_tokens_start", force=True)
+        output = self.model_runner.sample_tokens(grammar_output)
+        gpu_completed("sample_tokens_complete")
+        return output
 
     @torch.inference_mode()
     @with_gpu_sync_check
     def execute_model(
         self, scheduler_output: "SchedulerOutput"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput | None:
+        # Publish before any potentially blocking PP wait/receive: otherwise a
+        # stalled transport remains indistinguishable from an idle worker.
+        from vllm.v1.worker.progress_heartbeat import beat
+
+        beat("execute_model_start", force=True)
         # Wait for the previous step's sends so this forward pass cannot
         # overwrite buffers they are still reading.
         if self._pp_send_work:
@@ -1369,6 +1390,9 @@ class Worker(WorkerBase):
             if isinstance(
                 output, ModelRunnerOutput | AsyncModelRunnerOutput | NoneType
             ):
+                from vllm.v1.worker.progress_heartbeat import gpu_completed
+
+                gpu_completed("execute_model_complete")
                 return output
 
         assert isinstance(output, IntermediateTensors)
@@ -1388,8 +1412,13 @@ class Worker(WorkerBase):
         self._pp_send_work = handles[1:]
 
         if self.use_v2_model_runner and self.model_runner.is_pooling_model:
-            return self.model_runner.pool()  # type: ignore
-        return None
+            output = self.model_runner.pool()  # type: ignore
+        else:
+            output = None
+        from vllm.v1.worker.progress_heartbeat import gpu_completed
+
+        gpu_completed("execute_model_complete")
+        return output
 
     def take_draft_token_ids(self) -> DraftTokenIds | None:
         return self.model_runner.take_draft_token_ids()
@@ -1654,6 +1683,9 @@ class Worker(WorkerBase):
             self.model_runner.reset_lora_state()
 
     def shutdown(self) -> None:
+        from vllm.v1.worker.progress_heartbeat import stop_liveness
+
+        stop_liveness()
         gc.unfreeze()
 
         # has_kv_transfer_group can be None during interpreter shutdown.

@@ -378,3 +378,31 @@ class TestEpFilterOnSyntheticMoeWeights:
 
         for name, tensor in filtered.items():
             assert torch.equal(tensor, all_weights[name]), f"Tensor mismatch for {name}"
+
+@pytest.mark.parametrize("strategy", [None, "lazy"])
+def test_selective_mixed_shard_skips_tensor_before_materialization(tmp_path, strategy):
+    """A mixed shard returns only selected tensors with unchanged values."""
+    import json
+    import struct
+
+    header = {
+        "keep": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
+        "skip": {"dtype": "U8", "shape": [4], "data_offsets": [4, 8]},
+    }
+    encoded = json.dumps(header).encode()
+    encoded += b" " * ((-len(encoded)) % 8)
+    path = tmp_path / "mixed.safetensors"
+    path.write_bytes(struct.pack("<Q", len(encoded)) + encoded + struct.pack("<f", 7.0) + b"abcd")
+    loaded = dict(safetensors_weights_iterator(
+        [str(path)], False, strategy, is_unused_weight=lambda name: name == "skip"
+    ))
+    assert set(loaded) == {"keep"}
+    assert torch.equal(loaded["keep"], torch.tensor([7.0]))
+
+
+@pytest.mark.parametrize("strategy", ["eager", "prefetch", "torchao"])
+def test_selective_loading_rejects_whole_shard_strategies(strategy):
+    with pytest.raises(ValueError, match="requires lazy"):
+        list(safetensors_weights_iterator(
+            [], False, strategy, is_unused_weight=lambda name: True
+        ))

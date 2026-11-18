@@ -35,6 +35,7 @@ chunk-by-chunk while an n-gram at position ``p`` needs the token ids at
 """
 
 import ctypes
+import json
 import mmap
 import os
 import sys
@@ -64,7 +65,7 @@ from vllm.distributed.parallel_state import GroupCoordinator, in_the_same_node_a
 from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.logger import init_logger
 from vllm.model_executor.layers.fusion.quant_activation import QuantizedActivation
-from vllm.model_executor.layers.linear import ColumnParallelLinear
+from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelLinear
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.quantization.utils.quant_utils import kMxfp8Dynamic
 from vllm.model_executor.utils import set_weight_attrs
@@ -602,6 +603,101 @@ class NgramHashState(nn.Module):
         return output
 
 
+def _safetensors_tensor_offset(
+    path: str, name: str, *, expected_shape: tuple[int, int] | None = None,
+    expected_dtype: str | None = None,
+) -> int:
+    """Validate a table header before exposing its payload offset."""
+    with open(path, "rb") as f:
+        raw = f.read(8)
+        if len(raw) != 8:
+            raise ValueError("Truncated safetensors header")
+        header_len = int.from_bytes(raw, "little")
+        size = os.fstat(f.fileno()).st_size
+        if not 2 <= header_len <= min(size - 8, 100 << 20):
+            raise ValueError("Invalid safetensors header length")
+        header = json.loads(f.read(header_len))
+    spec = header[name]
+    if expected_shape is not None:
+        if spec.get("shape") != list(expected_shape):
+            raise ValueError(f"Unexpected Engram tensor shape for {name}")
+        if spec.get("dtype") != expected_dtype:
+            raise ValueError(f"Unexpected Engram tensor dtype for {name}")
+    start, end = spec["data_offsets"]
+    if expected_shape is not None and end - start != expected_shape[0] * expected_shape[1]:
+        raise ValueError(f"Unexpected Engram tensor byte count for {name}")
+    if not 0 <= start <= end <= size - 8 - header_len:
+        raise ValueError("Invalid Engram tensor payload bounds")
+    return 8 + header_len + start
+
+
+def _resolve_engram_disk_source(
+    layer_id: int, num_embeddings: int, head_dim: int,
+) -> tuple[str, int, str, int]:
+    """(weight file, offset, scale file, offset) of a layer's Engram table in
+    the checkpoint, for EngramConfig.disk_offload."""
+    model_config = get_current_vllm_config().model_config
+    model_dir = model_config.model
+    if not os.path.isdir(model_dir):
+        from huggingface_hub import snapshot_download
+
+        model_dir = snapshot_download(
+            model_dir, revision=model_config.revision, local_files_only=True
+        )
+    with open(os.path.join(model_dir, "model.safetensors.index.json")) as f:
+        weight_map = json.load(f)["weight_map"]
+    source: list = []
+    for suffix in ("weight", "scale"):
+        name = f"layers.{layer_id}.engram.embed.{suffix}"
+        path = os.path.realpath(os.path.join(model_dir, weight_map[name]))
+        if os.path.commonpath([os.path.realpath(model_dir), path]) != os.path.realpath(model_dir):
+            raise ValueError("Engram index path escapes checkpoint")
+        shape = (num_embeddings, head_dim if suffix == "weight" else head_dim // 32)
+        dtype = "F8_E4M3" if suffix == "weight" else "F8_E8M0"
+        source += [path, _safetensors_tensor_offset(
+            path, name, expected_shape=shape, expected_dtype=dtype,
+        )]
+    return tuple(source)  # type: ignore[return-value]
+
+
+_ENGRAM_DISK_EXT = None
+
+
+def _load_engram_disk_ext():
+    """Load the packaged reader, or compile it for source development."""
+    global _ENGRAM_DISK_EXT
+    if _ENGRAM_DISK_EXT is None:
+        import importlib
+
+        module_name = f"{__package__}.vllm_engram_disk"
+        try:
+            _ENGRAM_DISK_EXT = importlib.import_module(module_name)
+            return _ENGRAM_DISK_EXT
+        except ModuleNotFoundError as exc:
+            if exc.name != module_name:
+                raise
+        if os.environ.get("VLLM_ENGRAM_DISK_REQUIRE_PREBUILT") == "1":
+            raise RuntimeError("Packaged Engram disk reader is required but missing")
+        from torch.utils.cpp_extension import load
+
+        _ENGRAM_DISK_EXT = load(
+            name="vllm_engram_disk",
+            sources=[os.path.join(os.path.dirname(__file__), "engram_disk.cpp")],
+            extra_cflags=["-O2"],
+            with_cuda=True,
+            verbose=False,
+        )
+    return _ENGRAM_DISK_EXT
+
+
+def _engram_disk_noop_loader(
+    param: torch.nn.Parameter, loaded_weight: torch.Tensor
+) -> None:
+    """Reject accidental table materialization by an incompatible loader."""
+    raise RuntimeError("Disk Engram table must be skipped before materialization")
+
+
+
 def _engram_head_shard_weight_loader(
     param: torch.nn.Parameter, loaded_weight: torch.Tensor
 ) -> None:
@@ -970,8 +1066,30 @@ class ParallelEngramEmbedding(nn.Module):
         cpu_offload: bool = False,
         dp_shared_memory: bool = False,
         use_thp: bool = False,
+        disk_source: tuple[str, int, str, int] | None = None,
+        disk_threads: int = 32,
+        disk_cache_rows: int = 0,
+        disk_direct_io: bool = False,
     ) -> None:
         super().__init__()
+        self.disk_offload = disk_source is not None
+        self._disk = None
+        self._disk_views = None
+        self._disk_recorded = False
+        if self.disk_offload:
+            spin_ms = os.environ.get("VLLM_ENGRAM_DISK_SPIN_MS", "0")
+            try:
+                spin_ms_value = int(spin_ms)
+            except ValueError as exc:
+                raise ValueError("Invalid VLLM_ENGRAM_DISK_SPIN_MS") from exc
+            if spin_ms_value < 0 or spin_ms_value > 60000:
+                raise ValueError("Invalid VLLM_ENGRAM_DISK_SPIN_MS")
+            self._disk_spin_ms = spin_ms_value
+            if spin_ms_value and not disk_direct_io:
+                raise ValueError("Engram spin requires disk_direct_io")
+            if not cpu_offload or dp_shared_memory or use_thp:
+                raise ValueError("Invalid disk Engram storage combination")
+            self._weight_loader = _engram_disk_noop_loader
         assert head_sizes and all(size > 0 for size in head_sizes)
         assert sum(head_sizes) <= num_embeddings
         self.cpu_offload = cpu_offload
@@ -1058,7 +1176,15 @@ class ParallelEngramEmbedding(nn.Module):
                     "engram_vocab_start": row_start,
                 },
             )
-        if cpu_offload and not self.weight.is_meta:
+        if self.disk_offload:
+            assert disk_source is not None
+            self._disk = _load_engram_disk_ext().EngramDiskTable(
+                *disk_source, self.vocab_start_idx, self.part_num_embeddings,
+                dim, dim // block_size, disk_cache_rows, disk_threads, disk_direct_io,
+            )
+            if self._disk_spin_ms:
+                self._disk.enable_spin(self._disk_spin_ms)
+        elif cpu_offload and not self.weight.is_meta:
             # Constant dummy values avoid randomizing huge CPU lookup tables.
             set_weight_attrs(self.weight, {"dummy_weight_value": 1.0})
             # The ue8m0 encoding of scale 1.0 is exponent byte 127.
@@ -1079,6 +1205,9 @@ class ParallelEngramEmbedding(nn.Module):
 
     def _allocate_weights(self) -> tuple[torch.Tensor, torch.Tensor]:
         scale_dim = self.dim // self.block_size
+        if self.disk_offload:
+            return (torch.empty(1, self.dim, dtype=torch.float8_e4m3fn, device="cpu"),
+                    torch.empty(1, scale_dim, dtype=torch.uint8, device="cpu"))
         if torch.get_default_device().type == "meta" or not (
             self.cpu_offload or self.peer_rows
         ):
@@ -1184,6 +1313,9 @@ class ParallelEngramEmbedding(nn.Module):
 
         `background` limits the grid to leave SMs for concurrent work.
         """
+        if self.disk_offload:
+            self._disk_lookup(indices, out, background)
+            return
         rows = indices.shape[0] * self.part_n_hash_cols
         if not rows:
             return
@@ -1233,6 +1365,97 @@ class ParallelEngramEmbedding(nn.Module):
             OUT_STRIDE=out.stride(0),
             PEER_ROWS=self.peer_rows,
         )
+
+    def init_disk_staging(self, max_rows: int) -> None:
+        """Pinned staging for disk lookups; addresses stay fixed for the run."""
+        if not self.disk_offload:
+            return
+        if max_rows < 1:
+            raise ValueError("Engram disk staging requires positive capacity")
+        if hasattr(self, "_disk_ids"):
+            raise RuntimeError("Cannot replace graph-owned Engram staging buffers")
+        scale_dim = self.dim // self.block_size
+        self._disk_ids = torch.empty(
+            max_rows, dtype=torch.int64, device="cpu", pin_memory=True
+        )
+        self._disk_w = torch.empty(
+            max_rows, self.dim, dtype=torch.uint8, device="cpu", pin_memory=True
+        )
+        self._disk_s = torch.empty(
+            max_rows, scale_dim, dtype=torch.uint8, device="cpu", pin_memory=True
+        )
+        # Staging row r is output row r (token-major, local heads minor).
+        self._disk_rows = torch.arange(max_rows, dtype=torch.int64)
+        self._disk_dst = torch.arange(max_rows, dtype=torch.int32)
+        self._disk_done = torch.cuda.Event()
+        self._disk_views = (
+            get_accelerator_view_from_cpu_tensor(self._disk_w.view(torch.float8_e4m3fn)),
+            get_accelerator_view_from_cpu_tensor(self._disk_s),
+        )
+
+    def _disk_lookup(
+        self, indices: torch.Tensor, out: torch.Tensor, background: bool
+    ) -> None:
+        rows = indices.shape[0] * self.part_n_hash_cols
+        if not rows:
+            return
+        assert self._disk is not None
+        assert rows <= self._disk_ids.shape[0], "engram disk staging too small"
+        stream = torch.cuda.current_stream()
+        capturing = torch.cuda.is_current_stream_capturing()
+        if self._disk_recorded and not capturing:
+            # The pinned buffers serve every lookup of this table; lookups may
+            # alternate between the inline and the prefetch stream. A captured
+            # graph needs no event: each forward joins the prefetch stream
+            # before its rows are read, and a wait on an event recorded
+            # outside the capture would invalidate it.
+            stream.wait_event(self._disk_done)
+        head_end = self.head_start + self.part_n_hash_cols
+        local = indices[:, self.head_start : head_end].to(torch.int64)
+        local = local - self.vocab_start_idx
+        if (pad := self.part_n_hash_cols - local.shape[1]) > 0:
+            local = nn.functional.pad(local, (0, pad), value=-1)
+        self._disk_ids[:rows].copy_(local.reshape(-1), non_blocking=True)
+        # Host node on this stream: after the ids copy, before the kernel below.
+        self._disk.enqueue_read(
+            stream.cuda_stream,
+            self._disk_ids.data_ptr(),
+            self._disk_w.data_ptr(),
+            self._disk_s.data_ptr(),
+            rows,
+        )
+        assert self._disk_views is not None
+        weight, scales = self._disk_views
+        tiles = triton.cdiv(rows, 16)
+        grid = min(tiles, self._num_sms // 2 if background else self._num_sms)
+        # Sorted mode over the staging rows: ids r -> output row r.
+        _engram_lookup_kernel[(grid,)](
+            weight,
+            scales,
+            self._disk_rows,
+            self._disk_dst,
+            out,
+            0,
+            rows,
+            rows,
+            1,
+            1,
+            HEAD_START=self.head_start,
+            LOCAL_HEADS=self.part_n_hash_cols,
+            TOTAL_HEADS=self.n_hash_cols,
+            DIM=self.dim,
+            QUANT_BLOCK=self.block_size,
+            BLOCK_R=16,
+            GRID=grid,
+            SORTED=True,
+            PACKED=out.dtype == torch.uint8,
+            OUT_STRIDE=out.stride(0),
+            PEER_ROWS=0,
+        )
+        if not capturing:
+            self._disk_done.record(stream)
+            self._disk_recorded = True
+
 
     def forward(self, indices: torch.Tensor) -> torch.Tensor:
         """indices: [num_tokens, n_hash_cols] -> [num_tokens, n_hash_cols, dim]
@@ -1624,18 +1847,28 @@ class Engram(nn.Module):
         # suffix rule.
         self.embed_tokens = self._create_embedding(layout, layer_hash_index)
         n_hash_cols = (layout.max_ngram_size - 1) * layout.n_heads
-        # Without sequence parallelism every TP rank holds every token, so
-        # shard the output columns instead of replicating the projection.
-        self.wkv = ColumnParallelLinear(
-            n_hash_cols * layout.head_dim,
-            self.dim * (self.hc_mult + 1),
-            bias=False,
-            gather_output=True,
-            quant_config=quant_config,
-            return_bias=False,
-            prefix=f"{prefix}.wkv",
-            disable_tp=use_sequence_parallel,
-        )
+        self.wkv_row_parallel = os.environ.get("VLLM_ENGRAM_WKV_ROWPAR", "0") == "1"
+        if self.wkv_row_parallel:
+            embedding = self.embed_tokens
+            tp_size = embedding.tp_size
+            if (
+                tp_size <= 1 or use_sequence_parallel or embedding.dp_size > 1
+                or embedding.part_n_hash_cols * tp_size != embedding.n_hash_cols
+                or embedding.head_start != get_tensor_model_parallel_rank() * embedding.part_n_hash_cols
+            ):
+                raise ValueError("Engram wkv row parallel requires equal contiguous TP heads, "
+                                 "TP > 1 and no sequence/DP sharding")
+            self.wkv = RowParallelLinear(
+                n_hash_cols * layout.head_dim, self.dim * (self.hc_mult + 1),
+                bias=False, input_is_parallel=True, reduce_results=True,
+                quant_config=quant_config, return_bias=False, prefix=f"{prefix}.wkv",
+            )
+        else:
+            self.wkv = ColumnParallelLinear(
+                n_hash_cols * layout.head_dim, self.dim * (self.hc_mult + 1),
+                bias=False, gather_output=True, quant_config=quant_config,
+                return_bias=False, prefix=f"{prefix}.wkv", disable_tp=use_sequence_parallel,
+            )
         self.q_weight = nn.Parameter(
             torch.empty(self.hc_mult, self.dim, dtype=torch.bfloat16),
             requires_grad=False,
@@ -1660,6 +1893,14 @@ class Engram(nn.Module):
             cpu_offload=engram_config.cpu_offload,
             dp_shared_memory=bool(engram_config.dp_shared_memory),
             use_thp=engram_config.use_thp,
+            disk_source=(_resolve_engram_disk_source(
+                layout.layer_ids[layer_hash_index],
+                layout.num_embeddings[layer_hash_index], layout.head_dim,
+            )
+                         if engram_config.disk_offload else None),
+            disk_threads=engram_config.disk_threads,
+            disk_cache_rows=engram_config.disk_cache_rows,
+            disk_direct_io=engram_config.disk_direct_io,
         )
 
     def _init_staging(self, max_tokens: int, head_dim: int) -> None:
@@ -1669,6 +1910,9 @@ class Engram(nn.Module):
             self.embed_tokens.part_n_hash_cols,
             head_dim,
             dtype=torch.bfloat16,
+        )
+        self.embed_tokens.init_disk_staging(
+            max_tokens * self.embed_tokens.dp_size * self.embed_tokens.part_n_hash_cols
         )
         if not self.embed_tokens.cpu_offload:
             self._prefetch_stream = None
@@ -1744,6 +1988,8 @@ class Engram(nn.Module):
                 local_heads * dim,
             )
             return out
+        if self.wkv_row_parallel:
+            return rows
         rows = tensor_model_parallel_all_gather(rows, dim=1)
         return rows[:, : self.embed_tokens.n_hash_cols]
 

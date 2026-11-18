@@ -1108,6 +1108,13 @@ def gptq_marlin_repack(
     num_bits: int,
     is_a_8bit: bool = False,
 ) -> torch.Tensor:
+    schema = str(torch.ops._C.gptq_marlin_repack.default._schema)
+    if "bool is_a_8bit" not in schema:
+        if is_a_8bit:
+            raise RuntimeError("native Marlin repack lacks FP8 activation support")
+        return torch.ops._C.gptq_marlin_repack(
+            b_q_weight, size_k, size_n, num_bits
+        )
     return torch.ops._C.gptq_marlin_repack(
         b_q_weight, size_k, size_n, num_bits, is_a_8bit
     )

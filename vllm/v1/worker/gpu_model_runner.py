@@ -202,6 +202,7 @@ from vllm.v1.worker.cp_utils import (
 )
 from vllm.v1.worker.dp_utils import coordinate_batch_across_dp
 from vllm.v1.worker.ec_connector_model_runner_mixin import ECConnectorModelRunnerMixin
+from vllm.v1.worker.gpu.engram_execution import serialize_disk_engram
 from vllm.v1.worker.gpu.eplb_utils import (
     draft_model_supports_eplb,
     eplb_draft_model_name,
@@ -3903,6 +3904,7 @@ class GPUModelRunner(
         return bool(self.discard_request_mask.np[:num_reqs].all())
 
     @torch.inference_mode()
+    @serialize_disk_engram
     def execute_model(
         self,
         scheduler_output: "SchedulerOutput",
@@ -4267,6 +4269,7 @@ class GPUModelRunner(
         )
 
     @torch.inference_mode
+    @serialize_disk_engram
     def sample_tokens(
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput | IntermediateTensors:
@@ -4964,6 +4967,7 @@ class GPUModelRunner(
         return draft_token_ids
 
     @instrument(span_name="Loading (GPU)")
+    @serialize_disk_engram
     def load_model(
         self,
         load_dummy_weights: bool = False,
@@ -5444,6 +5448,7 @@ class GPUModelRunner(
         )
 
     @torch.inference_mode()
+    @serialize_disk_engram
     def _dummy_run(
         self,
         num_tokens: int,
@@ -6069,6 +6074,7 @@ class GPUModelRunner(
         max_task = max(output_size.items(), key=lambda x: x[1])[0]
         return self._dummy_pooler_run_task(hidden_states, max_task)
 
+    @serialize_disk_engram
     def profile_run(self, randomize_inputs: bool = False) -> None:
         # Profile with multimodal encoder & encoder cache.
         if self.supports_mm_inputs:
@@ -6170,6 +6176,7 @@ class GPUModelRunner(
 
     _freeze_gc = staticmethod(freeze_gc_for_cudagraph_capture)
 
+    @serialize_disk_engram
     def shutdown(self) -> None:
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
@@ -6178,9 +6185,9 @@ class GPUModelRunner(
 
         # Calls torch.accelerator.synchronize()
         self._cleanup_profiling_kv_cache()
-        if current_platform.is_rocm():
-            # Drop captured graphs before distributed teardown. On ROCm, delayed
-            # graph destruction can surface HSA faults in the next engine startup.
+        if current_platform.is_rocm() or current_platform.is_cuda():
+            # Clear graph host nodes before releasing model-owned reader and staging.
+            # ROCm also requires graph destruction before communicator teardown.
             CUDAGraphWrapper.clear_all_graphs()
             BreakableCUDAGraphWrapper.clear_all_graphs()
             self.encoder_cudagraph_manager = None
@@ -6265,6 +6272,7 @@ class GPUModelRunner(
                 logger.info("Initialized EncoderCudaGraphManager for vision encoder")
 
     @torch.inference_mode()
+    @serialize_disk_engram
     def profile_cudagraph_memory(self) -> int:
         with set_current_vllm_config(self.vllm_config):
             self._init_minimal_kv_cache_for_profiling()
@@ -6414,6 +6422,7 @@ class GPUModelRunner(
         return int(total_estimate)
 
     @instrument(span_name="Capture model")
+    @serialize_disk_engram
     def capture_model(self) -> int:
         if self.compilation_config.cudagraph_mode == CUDAGraphMode.NONE:
             logger.warning(

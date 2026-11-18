@@ -10,6 +10,7 @@ To implement non-causal attention, we leverage the sparse attention implementati
 include the future query tokens in the top-k indices for each query token.
 """
 
+import os
 from collections.abc import Iterable
 
 import regex as re
@@ -19,6 +20,7 @@ import torch.nn as nn
 import vllm.envs as envs
 from vllm.config import VllmConfig, get_current_vllm_config
 from vllm.config.kernel import NATIVE_MEGA_MOE_BACKENDS
+from vllm.distributed import get_tensor_model_parallel_world_size
 from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.logger import init_logger
 from vllm.model_executor.kernels.mhc.tilelang import (
@@ -29,10 +31,15 @@ from vllm.model_executor.layers.fused_moe import (
     fused_moe_make_expert_params_mapping,
 )
 from vllm.model_executor.layers.layernorm import RMSNorm
-from vllm.model_executor.layers.linear import ReplicatedLinear
+from vllm.model_executor.layers.linear import (
+    ReplicatedLinear,
+    RowParallelLinear,
+    UnquantizedLinearMethod,
+)
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead,
+    UnquantizedEmbeddingMethod,
     VocabParallelEmbedding,
 )
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
@@ -63,6 +70,8 @@ logger = init_logger(__name__)
 # MoE expert scale suffix differs by expert dtype (mirrors deepseek_v4 loaders):
 # fp4 experts register ``.weight_scale``; block-fp8 experts ``.weight_scale_inv``.
 _EXPERT_SCALE_RE = re.compile(r"\.experts\.\d+\.w[123]\.scale$")
+OWN_HEAD_PREFIX = "mtp_head"
+_OWN_HEAD_PIECES_RE = re.compile(r"^mtp\.head\.(trellis|suh|svh|mul1|mcg)$")
 
 
 class DSparkDeepseekV4Model(nn.Module):
@@ -95,13 +104,25 @@ class DSparkDeepseekV4Model(nn.Module):
             prefix=maybe_prefix(prefix, "embed_tokens"),
         )
 
-        self.main_proj = ReplicatedLinear(
-            config.hidden_size * len(self.target_layer_ids),
+        main_in = config.hidden_size * len(self.target_layer_ids)
+        tp_size = get_tensor_model_parallel_world_size()
+        want_rowpar = os.environ.get("VLLM_DSPARK_MAIN_PROJ_ROWPAR", "0") == "1"
+        if want_rowpar and (
+            tp_size <= 1 or self.use_sequence_parallel or main_in % (32 * tp_size)
+        ):
+            raise ValueError("DSpark main_proj row parallel requires TP > 1, "
+                             "no sequence parallelism and aligned input blocks")
+        self.main_proj_rowpar = want_rowpar
+        linear = RowParallelLinear if want_rowpar else ReplicatedLinear
+        kwargs = {"input_is_parallel": False, "reduce_results": True} if want_rowpar else {}
+        self.main_proj = linear(
+            main_in,
             config.hidden_size,
             bias=False,
             return_bias=False,
             quant_config=vllm_config.quant_config,
             prefix=maybe_prefix(prefix, "main_proj"),
+            **kwargs,
         )
         self.main_norm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
@@ -180,6 +201,16 @@ class DSparkDeepseekV4Model(nn.Module):
         place draft layers in different groups). ``None`` (or a ``None`` entry)
         runs the projection to reserve workspace but writes nothing (profiling).
         """
+        grouped = None
+        if os.environ.get("VLLM_DSPARK_CONTEXT_KV_GROUPED", "0") == "1" and 0 < main_x.shape[0] <= 16:
+            from vllm_exl3_moe.dense import context_kv_group
+
+            grouped = context_kv_group(
+                [layer.attn.fused_wqa_wkv for layer in self.layers], part=1
+            )
+            if grouped is None:
+                raise RuntimeError("DSpark grouped context KV requires EXL3 fused projections")
+        kv_all = grouped[0](main_x) if grouped is not None else None
         for i, layer in enumerate(self.layers):
             slot_mapping = (
                 None if context_slot_mappings is None else context_slot_mappings[i]
@@ -187,8 +218,12 @@ class DSparkDeepseekV4Model(nn.Module):
             attn = layer.attn
             # Optimized DSV4 MLA path: wkv part of the fused wq_a|wkv projection
             # (q_lora part discarded), then RoPE/quant/insert via the fused op.
-            qr_kv, _ = attn.fused_wqa_wkv(main_x)
-            kv = qr_kv[..., attn.q_lora_rank :]
+            if kv_all is None:
+                qr_kv, _ = attn.fused_wqa_wkv(main_x)
+                kv = qr_kv[..., attn.q_lora_rank :]
+            else:
+                lo = sum(grouped[1][:i])
+                kv = kv_all[:, lo : lo + grouped[1][i]]
             kv = attn.kv_norm(kv)
             if slot_mapping is None:
                 continue
@@ -274,10 +309,10 @@ def _insert_context_kv(
 
 
 class DSparkDeepseekV4ForCausalLM(nn.Module):
-    # Draft weights ship in the target checkpoint (mtp.*) without embed/head, so
-    # load_dspark_model always aliases the target's.
+    # Embeddings are shared; an explicitly quantized mtp.head can stay independent.
     has_own_embed_tokens = False
     has_own_lm_head = False
+    keeps_own_lm_head = False
     # Full-vocab draft: draft ids are target ids, no remapping needed.
     draft_id_to_target_id = None
 
@@ -296,13 +331,29 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
         self.model = DSparkDeepseekV4Model(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
         )
-        # Shared with the target (aliased by the speculator's load utility).
-        self.lm_head = ParallelLMHead(
-            self.config.vocab_size,
-            self.config.hidden_size,
-            prefix=maybe_prefix(prefix, "lm_head"),
-        )
+        if os.environ.get("VLLM_DSPARK_OWN_HEAD") == "1":
+            self.lm_head = ParallelLMHead(
+                self.config.vocab_size,
+                self.config.hidden_size,
+                quant_config=self.quant_config,
+                prefix=maybe_prefix(prefix, OWN_HEAD_PREFIX),
+            )
+            if type(self.lm_head.quant_method) in (
+                UnquantizedEmbeddingMethod,
+                UnquantizedLinearMethod,
+            ):
+                raise ValueError(
+                    "VLLM_DSPARK_OWN_HEAD requires a quantized mtp_head method"
+                )
+            self.keeps_own_lm_head = True
+        else:
+            self.lm_head = ParallelLMHead(
+                self.config.vocab_size,
+                self.config.hidden_size,
+                prefix=maybe_prefix(prefix, "lm_head"),
+            )
         self.logits_processor = LogitsProcessor(self.config.vocab_size)
+        self._markov_cache = None
 
     # --- Hooks used by the speculator -------------------------------------
 
@@ -353,6 +404,44 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
     def markov_bias(self, markov_embed: torch.Tensor) -> torch.Tensor:
         return self.model.markov_head.bias(markov_embed, self.logits_processor)
 
+    def markov_bias_for_ids(
+        self, token_ids: torch.Tensor, markov_embed: torch.Tensor
+    ) -> torch.Tensor:
+        if self._markov_cache is None:
+            return self.markov_bias(markov_embed)
+        return self._markov_cache(token_ids, markov_embed)
+
+    def _maybe_build_markov_cache(self) -> None:
+        if not os.environ.get("VLLM_DSPARK_MARKOV_CACHE"):
+            return
+        from .ops.markov_cache import MarkovBiasCache
+
+        head = self.model.markov_head
+        w1, w2 = head.markov_w1.weight, head.markov_w2.weight
+        if w2.dim() != 2 or w2.dtype not in (torch.bfloat16, torch.float16):
+            raise ValueError("DSpark Markov cache requires a 2D FP16/BF16 projection")
+        probe = torch.tensor([0, 1, 2, 3], dtype=torch.int64, device=w2.device)
+        ref = self.markov_bias(self.markov_embed(probe))
+        if ref.shape != (probe.numel(), w2.shape[0]):
+            raise ValueError("DSpark Markov cache requires full-vocabulary bias")
+        cache = MarkovBiasCache(w1, w2, ref.dtype)
+        got = cache(probe, self.markov_embed(probe))
+        err = (got.float() - ref.float()).abs().max() / ref.float().abs().max().clamp_min(1e-12)
+        logger.info("DSpark Markov cache max relative error vs GEMM %.2e", err)
+        self._markov_cache = cache
+
+    def apply_markov_bias_gathered(
+        self,
+        markov_embed: torch.Tensor,
+        logits: torch.Tensor,
+        values: torch.Tensor,
+        index: torch.Tensor,
+    ) -> torch.Tensor:
+        """Apply Markov bias to the selected base-logit candidates only."""
+        return self.model.markov_head.apply_bias_gathered(
+            markov_embed, logits, values, index
+        )
+
     def compute_confidence(
         self, head_hidden: torch.Tensor, markov_embed: torch.Tensor
     ) -> torch.Tensor:
@@ -360,13 +449,17 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
         assert self.model.confidence_head is not None
         return torch.sigmoid(self.model.confidence_head(head_hidden, markov_embed))
 
+    def is_unused_checkpoint_weight(self, name: str) -> bool:
+        """Only materialize draft checkpoint entries accepted by the loader."""
+        return self._remap_dspark_name(name) is None
+
     # --- Weight loading ----------------------------------------------------
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         """Load the ``mtp.{0,1,2}.*`` draft weights from the target checkpoint.
 
         Non-mtp weights (embed/head/main layers) belong to the target model and
-        are skipped here. ``embed_tokens``/``lm_head`` are aliased from the target.
+        are skipped here. Embeddings are shared; the head may be independent.
         """
         first_layer = self.model.layers[0]
         use_native_mega_moe = first_layer.ffn.use_native_mega_moe
@@ -484,14 +577,34 @@ class DSparkDeepseekV4ForCausalLM(nn.Module):
 
         if self.model.confidence_head is not None and not loaded_confidence_head:
             self.model.confidence_head = None
+        if self.keeps_own_lm_head:
+            missing = {
+                f"lm_head.{name}" for name, _ in self.lm_head.named_parameters()
+            } - loaded_params
+            if missing:
+                raise ValueError(f"Missing drafter head pieces: {sorted(missing)}")
         logger.info_once("DSpark draft model loaded: %d params", len(loaded_params))
         return loaded_params
+
+    def process_weights_after_loading(self) -> None:
+        # All child quantization finalizers run before this model-level hook.
+        # The cache reads only Markov-head weights, not the optionally shared
+        # target lm_head, so construct it here rather than delaying to the
+        # speculator (which would miss nonstandard get_model call sites).
+        self._maybe_build_markov_cache()
 
     def _remap_dspark_name(self, name: str) -> str | None:
         """Map a checkpoint ``mtp.{i}.*`` name to this model's parameter path.
 
         Returns None for non-mtp weights (owned by the target model).
         """
+        own_head = _OWN_HEAD_PIECES_RE.fullmatch(name)
+        if own_head is not None:
+            return (
+                f"lm_head.{own_head.group(1)}"
+                if self.keeps_own_lm_head
+                else None
+            )
         m = re.match(r"mtp\.(\d+)\.(.*)", name)
         if m is None:
             return None

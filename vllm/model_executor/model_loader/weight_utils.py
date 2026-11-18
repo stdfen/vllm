@@ -1118,6 +1118,7 @@ def safetensors_weights_iterator(
     safetensors_load_strategy: str | None = None,
     local_expert_ids: set[int] | None = None,
     *,
+    is_unused_weight: Callable[[str], bool] | None = None,
     safetensors_prefetch_num_threads: int = DEFAULT_SAFETENSORS_PREFETCH_NUM_THREADS,
     safetensors_prefetch_block_size: int = DEFAULT_SAFETENSORS_PREFETCH_BLOCK_SIZE,
 ) -> Generator[tuple[str, torch.Tensor], None, None]:
@@ -1127,6 +1128,8 @@ def safetensors_weights_iterator(
     this rank are skipped **before** reading from disk, which drastically
     reduces storage I/O for MoE models under EP.
     """
+    if is_unused_weight is not None and safetensors_load_strategy not in (None, "lazy"):
+        raise ValueError("Selective tensor loading requires lazy safetensors loading")
     loading_desc = "Loading safetensors checkpoint shards"
     if safetensors_load_strategy == "eager":
         loading_desc += " (eager)"
@@ -1190,6 +1193,9 @@ def safetensors_weights_iterator(
             avail_bytes / 1024**3,
         )
 
+    if is_unused_weight is not None:
+        should_prefetch = False
+
     if should_prefetch:
         _prefetch_all_checkpoints(
             sorted_files,
@@ -1225,7 +1231,9 @@ def safetensors_weights_iterator(
             with safe_open(st_file, framework="pt") as f:
                 state_dict = {}
                 for name in f.keys():  # noqa: SIM118
-                    if should_skip_weight(name, local_expert_ids):
+                    if (
+                        is_unused_weight is not None and is_unused_weight(name)
+                    ) or should_skip_weight(name, local_expert_ids):
                         continue
                     state_dict[name] = f.get_tensor(name)
 
@@ -1243,7 +1251,9 @@ def safetensors_weights_iterator(
         else:
             with safe_open(st_file, framework="pt") as f:
                 for name in f.keys():  # noqa: SIM118
-                    if should_skip_weight(name, local_expert_ids):
+                    if (
+                        is_unused_weight is not None and is_unused_weight(name)
+                    ) or should_skip_weight(name, local_expert_ids):
                         continue
                     param = f.get_tensor(name)
                     yield name, param

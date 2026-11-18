@@ -131,6 +131,8 @@ class InputBatch:
     # adaptive verification with batch-sharded sampling, when the budget binds.
     num_admitted_draft_tokens: "AdmittedDraftCounts | None" = None
 
+    depth_dead_rows: torch.Tensor | None = None
+
     @classmethod
     def make_dummy(
         cls,

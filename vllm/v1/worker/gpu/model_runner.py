@@ -30,6 +30,7 @@ import torch
 import torch.nn as nn
 
 import vllm.envs as envs
+from vllm.v1.worker.gpu.engram_execution import serialize_disk_engram
 from vllm.compilation.breakable_cudagraph import BreakableCUDAGraphWrapper
 from vllm.compilation.counter import compilation_counter
 from vllm.compilation.cuda_graph import CUDAGraphStat, CUDAGraphWrapper
@@ -96,6 +97,7 @@ from vllm.v1.worker.gpu.async_utils import (
     AsyncPoolingOutput,
     StepTimingCollector,
 )
+from vllm.v1.worker.gpu import short_ctx
 from vllm.v1.worker.gpu.attn_utils import (
     FastPrefillHelper,
     build_slot_mappings_by_layer,
@@ -173,6 +175,10 @@ from vllm.v1.worker.gpu.spec_decode.speculator import DraftModelSpeculator
 from vllm.v1.worker.gpu.spec_decode.utils import (
     DraftTokensHandler,
     get_drafter_hidden_states,
+)
+from vllm.v1.worker.gpu.spec_decode.depth_policy import (
+    DSparkDepthPolicy,
+    depth_policy_requested,
 )
 from vllm.v1.worker.gpu.states import RequestState
 from vllm.v1.worker.gpu.structured_outputs import (
@@ -295,6 +301,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         )
 
         # Speculative decoding.
+        self.depth_policy: DSparkDepthPolicy | None = None
         self.speculator = None
         self.use_aux_hidden_state_outputs = False
         if self.speculative_config is not None:
@@ -382,6 +389,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             tasks.extend(PoolingRunner.get_supported_tasks(self.model))
         return tuple(tasks)
 
+    @serialize_disk_engram
     def load_model(
         self,
         load_dummy_weights: bool = False,
@@ -715,6 +723,25 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             copy_admitted_drafts_to_host=self.batch_sharder is not None,
         )
 
+        if depth_policy_requested():
+            if (
+                self.speculator is None
+                or self.speculative_config.method != "dspark"
+                or self.adaptive_verification is not None
+                or self.batch_sharder is not None
+                or self.pcp_manager is not None
+                or self.parallel_config.pipeline_parallel_size != 1
+                or not envs.VLLM_MOE_SKIP_PADDING
+            ):
+                raise ValueError(
+                    "DSpark depth policy requires DSpark, PP1/PCP1, MoE padding "
+                    "and no adaptive verification or batch-sharded sampling"
+                )
+            self.depth_policy = DSparkDepthPolicy(
+                self.num_speculative_steps, self.max_num_reqs, self.device,
+                has_confidence=self.speculator.use_confidence_head,
+            )
+
         self.block_tables = BlockTables(
             block_sizes=block_sizes,
             max_num_reqs=self.max_num_reqs,
@@ -836,6 +863,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
     @torch.inference_mode()
     @step_eplb_after(is_dummy=True)
+    @serialize_disk_engram
     def _dummy_run(
         self,
         num_tokens: int,
@@ -1019,6 +1047,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.pooling_runner.dummy_pooler_run(hidden_states)
 
     @torch.inference_mode()
+    @serialize_disk_engram
     def profile_run(self, randomize_inputs: bool = False) -> None:
         if self.supports_mm_inputs and self.is_first_pp_rank:
             mm_config = self.model_config.multimodal_config
@@ -1066,6 +1095,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.pooling_runner.release_late_interaction_query_cache(query_keys)
 
     @torch.inference_mode()
+    @serialize_disk_engram
     def profile_cudagraph_memory(self) -> int:
         """Estimate the GPU memory required to capture CUDA graphs."""
         # Runs before the KV cache exists, outside compile_or_warm_up_model.
@@ -1083,6 +1113,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         )
 
     @torch.inference_mode()
+    @serialize_disk_engram
     def capture_model(self, *, profile_only: bool = False) -> int:
         assert self.cudagraph_manager is not None
         capture_encoder = (
@@ -1234,6 +1265,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             req_index = self.req_states.req_id_to_index[req_id]
             if self.adaptive_verification is not None:
                 self.adaptive_verification.add_request(req_index)
+            if self.depth_policy is not None:
+                self.depth_policy.reset(req_index)
 
             if self.pooling_runner is not None:
                 assert new_req_data.pooling_params is not None
@@ -1520,6 +1553,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.model_state.num_new_sampled_tokens_per_step,
         )
 
+        depth_dead_rows = None
+        if self.depth_policy is not None and total_num_draft_tokens > 0:
+            depth_dead_rows = self.depth_policy.dead_rows(
+                expanded_idx_mapping, expanded_local_pos
+            )
+            is_padding[logits_indices.long()] |= depth_dead_rows
+
         fast_prefill = None
         if self.fast_prefill is not None:
             fast_prefill = self.fast_prefill.prepare(
@@ -1588,6 +1628,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 else None
             ),
         )
+        input_batch.depth_dead_rows = depth_dead_rows
         if self.pcp_manager is not None:
             input_batch = self.pcp_manager.partition_batch(input_batch, batch_desc)
         return input_batch
@@ -1672,6 +1713,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 grammar_output.structured_output_request_ids,
                 grammar_output.num_acceptable_drafts,
             )
+
+        if self.depth_policy is not None and input_batch.num_draft_tokens > 0:
+            dead = input_batch.depth_dead_rows
+            if dead is None or dead.shape[0] != logits.shape[0]:
+                raise RuntimeError("DSpark depth policy: missing verify mask")
+            invalid_drafts = dead if invalid_drafts is None else invalid_drafts | dead
 
         sampler_output: SamplerOutput | None
         if input_batch.num_reqs == 0:
@@ -1761,6 +1808,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         )
 
     @torch.inference_mode()
+    @serialize_disk_engram
     def execute_model(
         self,
         scheduler_output: SchedulerOutput,
@@ -1828,6 +1876,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # when encoder inputs are scheduled, because this step updates
             # cross-attention cache with dynamic encoder outputs.
             skip_compiled = True
+
+        max_seq_len = None
+        if (short_ctx.BOUNDS and self.dp_size == 1 and self.pcp_manager is None
+                and batch_req_state is not None
+                and not batch_req_state.has_prefill and num_reqs > 0):
+            idx = batch_req_state.idx_mapping_np
+            max_seq_len = int((self.req_states.num_computed_tokens_np[idx]
+                               + batch_req_state.num_scheduled_tokens).max()) + short_ctx.MARGIN
+        short_ctx.set_dispatch_max_seq_len(max_seq_len)
 
         batch_desc, dp_sync_state = dispatch_cg_and_sync_dp(
             self.cudagraph_manager,
@@ -2146,6 +2203,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
     @torch.inference_mode()
     @step_eplb_after()
+    @serialize_disk_engram
     def sample_tokens(
         self, grammar_output: GrammarOutput | None
     ) -> AsyncOutput | ModelRunnerOutput | None:
@@ -2200,6 +2258,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         sampler_output, num_sampled, num_rejected = self.sample(
             hidden_states, input_batch, grammar_output
         )
+
+        if self.depth_policy is not None and input_batch.num_draft_tokens > 0:
+            self.depth_policy.observe(
+                input_batch.idx_mapping, num_sampled,
+                input_batch.num_draft_tokens_per_req, input_batch.num_reqs,
+            )
 
         if self.pp_handler is not None:
             # Broadcast to non-last PP ranks (handles spec decode multi-token).
@@ -2329,6 +2393,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     self.speculator.draft_token_confidence_probs, input_batch
                 )
 
+            if self.depth_policy is not None:
+                self.depth_policy.record(
+                    self.speculator.draft_token_confidence_probs,
+                    input_batch.idx_mapping, input_batch.num_reqs,
+                )
+
         if self.num_speculative_steps > 0:
             # Spec-decode and diffusion LLMs both use draft tokens but the latter does
             # not have a speculator (i.e. self.speculator is None)
@@ -2401,18 +2471,22 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             input_batch.query_start_loc,
         )
 
+    @serialize_disk_engram
     def shutdown(self) -> None:
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
         torch.accelerator.synchronize()
-        if current_platform.is_rocm():
-            # RCCL's ncclCommAbort waits for live graphs that captured the comm:
-            # https://github.com/ROCm/rocm-systems/issues/13018
+        if current_platform.is_rocm() or current_platform.is_cuda():
+            # Graph host nodes retain model-owned reader/staging pointers.
+            # Clear them before releasing the model; ROCm also needs this
+            # before communicator teardown.
             CUDAGraphWrapper.clear_all_graphs()
             BreakableCUDAGraphWrapper.clear_all_graphs()
         if self.aux_output_connector is not None:
             self.aux_output_connector.close()
         set_offloader(None)
+        if self.cudagraph_manager is not None:
+            self.cudagraph_manager.release_graphs()
         self.cudagraph_manager = None
         self.fast_prefill = None
         self.pooling_runner = None

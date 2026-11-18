@@ -1557,10 +1557,13 @@ class DeepseekV4Indexer(nn.Module):
         attn_metadata = get_forward_context().attn_metadata
         if isinstance(attn_metadata, dict):
             indexer_metadata = cast(Any, attn_metadata[self.k_cache.prefix])
-            if (
-                indexer_metadata.max_seq_len // self.compress_ratio <= self.topk_tokens
-                and not torch.cuda.is_current_stream_capturing()
-            ):
+            from vllm.v1.worker.gpu.short_ctx import capture_bound
+
+            capturing = torch.cuda.is_current_stream_capturing()
+            bound = capture_bound() if capturing else None
+            if ((not capturing and indexer_metadata.max_seq_len // self.compress_ratio
+                 <= self.topk_tokens) or
+                (bound is not None and bound // self.compress_ratio <= self.topk_tokens)):
                 # candidates num smaller than topk, every candidate is selected
                 # but we still need to build k cache
                 if self.owns_k:

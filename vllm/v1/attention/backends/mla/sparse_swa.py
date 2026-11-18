@@ -1,5 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import contextlib
+import contextvars
+import os
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
 
@@ -7,6 +10,7 @@ import torch
 from transformers import DeepseekV4Config
 
 from vllm.config import CacheConfig, VllmConfig, get_current_vllm_config
+from vllm.logger import init_logger
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.model_executor.warmup.jit_warmup import (
     WarmupIntRange,
@@ -42,6 +46,8 @@ from vllm.v1.kv_cache_interface import (
     SlidingWindowMLASpec,
     get_kv_quant_mode,
 )
+
+logger = init_logger(__name__)
 
 # DeepseekV4 decode layer types, keyed by compress_ratio. Each type has a distinct
 # (topk, extra_topk, extra_page_block_size) config, so they cannot share a
@@ -621,8 +627,17 @@ class DeepseekSparseSWAMetadataBuilder(AttentionMetadataBuilder):
             self.token_to_req_indices
         )
 
+        batch = _swa_batch.get()
+        defer = (
+            batch is not None
+            and num_prefill_tokens == 0
+            and num_decode_tokens > 0
+            and common_attn_metadata.causal is True
+            and slot_mapping.shape[0] >= num_decode_tokens
+        )
         is_valid_token = self.is_valid_token[: slot_mapping.shape[0]]
-        torch.ge(slot_mapping, 0, out=is_valid_token)
+        if not defer:
+            torch.ge(slot_mapping, 0, out=is_valid_token)
         if replay_start is None:
             # Graph captures build without it; their dummy batches replay nothing.
             replay_start = self.no_replay_start
@@ -632,7 +647,15 @@ class DeepseekSparseSWAMetadataBuilder(AttentionMetadataBuilder):
             self.noncausal_index_width if non_causal else self.window_size
         )
         decode_swa_indices = self.decode_swa_indices
-        if num_decode_tokens > 0:
+        if defer:
+            assert batch is not None
+            batch.append(_SWADecodeBuild(
+                decode_swa_indices, self.decode_swa_lens, is_valid_token,
+                slot_mapping, block_table, replay_start, query_start_loc, seq_lens,
+                token_to_req_indices, self.window_size, self.block_size,
+                num_decode_tokens,
+            ))
+        elif num_decode_tokens > 0:
             self.decode_swa_lens[num_decode_tokens:] = 0
             if non_causal:
                 assert self.is_dspark, (
@@ -1391,3 +1414,205 @@ class ComputeDSparkNoncausalSWAIndicesKernel(
 _COMPUTE_PREFILL_METADATA_KERNEL = ComputePrefillMetadataKernel()
 _COMPUTE_SWA_INDICES_AND_LENS_KERNEL = ComputeSWAIndicesAndLensKernel()
 _COMPUTE_DSPARK_NONCAUSAL_SWA_INDICES_KERNEL = ComputeDSparkNoncausalSWAIndicesKernel()
+
+
+# Adapted from sudoingX v2.0 patch 0037 (Apache-2.0).
+_swa_batch = contextvars.ContextVar("swa_decode_batch", default=None)
+_swa_tables: dict[tuple, torch.Tensor] = {}
+_SWA_BATCH_ENABLED = os.environ.get("VLLM_DSV41_SWA_BATCH", "0") == "1"
+_SWA_BATCH_FILE = os.environ.get("VLLM_DSV41_SWA_BATCH_FILE") or None
+_swa_file = {"n": 0, "mtime": None}
+_swa_logged = False
+
+@dataclass
+class _SWADecodeBuild:
+    indices: torch.Tensor  # [max_tokens, 1, width] int32
+    lens: torch.Tensor  # [max_tokens] int32
+    is_valid: torch.Tensor  # [n_slots] bool
+    slot_mapping: torch.Tensor  # [n_slots]
+    block_table: torch.Tensor  # [num_reqs, max_blocks] int32
+    replay_start: torch.Tensor  # [>= num_reqs] int32
+    query_start_loc: torch.Tensor
+    seq_lens: torch.Tensor
+    token_to_req: torch.Tensor
+    window_size: int
+    block_size: int
+    num_tokens: int
+
+
+def _swa_batch_on() -> bool:
+    global _SWA_BATCH_ENABLED
+    if _SWA_BATCH_FILE is not None:
+        _swa_file["n"] += 1
+        if _swa_file["n"] % 16 == 1:
+            try:
+                mtime = os.stat(_SWA_BATCH_FILE).st_mtime_ns
+                if mtime != _swa_file["mtime"]:
+                    with open(_SWA_BATCH_FILE) as f:
+                        value = f.read().strip()
+                    if value not in ("0", "1"):
+                        raise ValueError("invalid SWA batch switch")
+                    _SWA_BATCH_ENABLED = value == "1"
+                    _swa_file["mtime"] = mtime
+            except OSError:
+                pass
+    return _SWA_BATCH_ENABLED
+
+
+@contextlib.contextmanager
+def deferred_decode_builds():
+    if not _swa_batch_on() or _swa_batch.get() is not None:
+        yield
+        return
+    builds: list[_SWADecodeBuild] = []
+    token = _swa_batch.set(builds)
+    try:
+        yield
+        run_swa_decode_builds(builds)
+    finally:
+        _swa_batch.reset(token)
+
+
+def _swa_batch_key(b: _SWADecodeBuild) -> tuple:
+    return (
+        b.indices.shape[-1], b.indices.stride(0), b.lens.shape[0], b.is_valid.shape[0],
+        b.slot_mapping.dtype, b.slot_mapping.device, b.window_size, b.block_size, b.num_tokens,
+        b.query_start_loc.data_ptr(), b.seq_lens.data_ptr(), b.token_to_req.data_ptr(),
+    )
+
+
+def run_swa_decode_builds(builds: list[_SWADecodeBuild]) -> None:
+    """One _swa_decode_batched_kernel launch per batch of builds that share shapes and
+    the batch-level tensors (on V4.1, all of a step's groups)."""
+    global _swa_logged
+    batches: dict[tuple, list[_SWADecodeBuild]] = {}
+    for b in builds:
+        assert b.indices.dtype == b.lens.dtype == b.block_table.dtype == torch.int32
+        assert b.replay_start.dtype == torch.int32 and b.is_valid.dtype == torch.bool
+        assert b.indices.stride(-1) == 1 and b.block_table.stride(-1) == 1
+        batches.setdefault(_swa_batch_key(b), []).append(b)
+    for key, bs in batches.items():
+        rows = tuple(
+            (b.indices.data_ptr(), b.lens.data_ptr(), b.is_valid.data_ptr(),
+             b.slot_mapping.data_ptr(), b.block_table.data_ptr(), b.replay_start.data_ptr(),
+             b.block_table.stride(0))
+            for b in bs
+        )
+        table = _swa_tables.get(rows)
+        if table is None:  # persistent buffers: one small upload per layout, then cached
+            if len(_swa_tables) >= 64:
+                _swa_tables.clear()
+            table = torch.tensor(rows, dtype=torch.int64, device=bs[0].lens.device)
+            _swa_tables[rows] = table
+        b0 = bs[0]
+        # Retired cached tables may still be in flight on a non-default stream.
+        table.record_stream(torch.cuda.current_stream(table.device))
+        if not _swa_logged:
+            _swa_logged = True
+            logger.info("VLLM_DSV41_SWA_BATCH: %d SWA decode builds in one launch", len(bs))
+        n_tokens, n_slots, n_lens = b0.num_tokens, b0.is_valid.shape[0], b0.lens.shape[0]
+        n_main = max(n_tokens, n_slots)
+        fill = 1024
+        n_fill = triton.cdiv(max(n_lens - n_tokens, 0), fill)
+        _swa_decode_batched_kernel[(n_main + n_fill, len(bs))](
+            table,
+            b0.query_start_loc,
+            b0.seq_lens,
+            b0.token_to_req,
+            n_tokens,
+            n_slots,
+            n_lens,
+            n_main,
+            b0.indices.stride(0),
+            b0.window_size,
+            b0.indices.shape[-1],
+            b0.block_size,
+            SLOT_I64=b0.slot_mapping.dtype == torch.int64,
+            TRITON_BLOCK_SIZE=1024,
+            FILL_BLOCK=fill,
+        )
+
+
+@triton.jit(do_not_specialize=["n_tokens", "n_slots", "n_lens", "n_main", "swa_indices_stride"])
+def _swa_decode_batched_kernel(
+    table_ptr,
+    query_start_loc_ptr,
+    seq_lens_ptr,
+    token_to_req_indices_ptr,
+    n_tokens,
+    n_slots,
+    n_lens,
+    n_main,
+    swa_indices_stride,
+    window_size,
+    index_width,
+    block_size,
+    SLOT_I64: tl.constexpr,
+    TRITON_BLOCK_SIZE: tl.constexpr,
+    FILL_BLOCK: tl.constexpr,
+):
+    """One group (program_id 1) of a deferred decode build: programs below n_main do
+    is_valid = slot_mapping >= 0 (rows < n_slots) and _compute_swa_indices_and_lens_kernel's
+    decode row (rows < n_tokens, token_offset 0, no image), the rest zero the lens tail
+    [n_tokens, n_lens), as the unbatched build's torch.ge / fill / kernel do."""
+    pid = tl.program_id(0)
+    row = table_ptr + tl.program_id(1) * 7
+    swa_indices_ptr = tl.load(row + 0).to(tl.pointer_type(tl.int32))
+    swa_lens_ptr = tl.load(row + 1).to(tl.pointer_type(tl.int32))
+    is_valid_ptr = tl.load(row + 2).to(tl.pointer_type(tl.int8))
+    if SLOT_I64:
+        slot_ptr = tl.load(row + 3).to(tl.pointer_type(tl.int64))
+    else:
+        slot_ptr = tl.load(row + 3).to(tl.pointer_type(tl.int32))
+    block_table_ptr = tl.load(row + 4).to(tl.pointer_type(tl.int32))
+    replay_start_ptr = tl.load(row + 5).to(tl.pointer_type(tl.int32))
+    block_table_stride = tl.load(row + 6)
+    if pid >= n_main:
+        offs = n_tokens + (pid - n_main) * FILL_BLOCK + tl.arange(0, FILL_BLOCK)
+        tl.store(swa_lens_ptr + offs, 0, mask=offs < n_lens)
+        return
+    token_idx = pid
+    is_valid = tl.load(slot_ptr + token_idx, mask=token_idx < n_slots, other=-1) >= 0
+    if token_idx < n_slots:
+        tl.store(is_valid_ptr + token_idx, is_valid.to(tl.int8))
+    if token_idx >= n_tokens:
+        return
+    if not is_valid:
+        tl.store(swa_lens_ptr + pid, 0)
+        for i in range(0, index_width, TRITON_BLOCK_SIZE):
+            offset = i + tl.arange(0, TRITON_BLOCK_SIZE)
+            tl.store(
+                swa_indices_ptr + pid * swa_indices_stride + offset,
+                -1,
+                mask=offset < index_width,
+            )
+        return
+
+    req_idx = tl.load(token_to_req_indices_ptr + token_idx)
+    query_start = tl.load(query_start_loc_ptr + req_idx)
+    query_end = tl.load(query_start_loc_ptr + req_idx + 1)
+    query_len = query_end - query_start
+    seq_len = tl.load(seq_lens_ptr + req_idx)
+    prefix_len = seq_len - query_len
+    pos = prefix_len + token_idx - query_start
+    start_pos = tl.maximum(pos - (window_size - 1), 0)
+    start_pos = tl.maximum(start_pos, tl.load(replay_start_ptr + req_idx))
+    end_pos = pos + 1
+    swa_len = end_pos - start_pos
+    tl.store(swa_lens_ptr + pid, swa_len)
+    for i in range(0, index_width, TRITON_BLOCK_SIZE):
+        offset = i + tl.arange(0, TRITON_BLOCK_SIZE)
+        pos_offset = start_pos + offset
+        block_indices = pos_offset // block_size
+        block_numbers = tl.load(
+            block_table_ptr + req_idx * block_table_stride + block_indices,
+            mask=pos_offset < end_pos,
+        )
+        block_offsets = pos_offset % block_size
+        slot_ids = block_numbers * block_size + block_offsets
+        slot_ids = tl.where(offset < swa_len, slot_ids, -1)
+        tl.store(
+            swa_indices_ptr + pid * swa_indices_stride + offset,
+            slot_ids,
+            mask=offset < index_width,
+        )

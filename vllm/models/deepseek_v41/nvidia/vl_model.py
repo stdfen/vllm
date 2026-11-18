@@ -19,6 +19,7 @@ Thin multimodal wrapper around the text-only ``DeepseekV41LLMForCausalLM``:
 from collections.abc import Iterable
 from typing import Annotated
 
+import regex as re
 import torch
 from torch import nn
 
@@ -54,6 +55,7 @@ from ..common.mm_preprocess import (
 from ..common.vl_cudagraph import DeepseekV4VLEncoderCudaGraphMixin
 from ..decoder_replay_layers import DecoderReplayLayers
 from .model import (
+    HEAD_PIECES,
     DeepseekV41LLMForCausalLM,
     _linear_scale_param_name,
     _make_deepseek_v4_weights_mapper,
@@ -93,9 +95,11 @@ def _make_deepseek_v4_vl_weights_mapper(
         "hc_head": "language_model.model.hc_head",
         "mtp.": "language_model.model.mtp.",
     }
+    regex = {p: r for p, r in base.orig_to_new_regex.items() if p.pattern != HEAD_PIECES}
+    regex[re.compile(HEAD_PIECES)] = r"language_model.lm_head.\1"
     return WeightsMapper(
         orig_to_new_prefix=orig_to_new_prefix,
-        orig_to_new_regex=base.orig_to_new_regex,
+        orig_to_new_regex=regex,
         orig_to_new_suffix={
             "head.weight": "language_model.lm_head.weight",
             "embed.weight": "embed_tokens.weight",

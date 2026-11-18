@@ -1459,6 +1459,8 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
             1 if name.endswith(("weight_scale_inv", "weight_scale")) else block_size[0]
         )
         dim = 1 if ".down_proj." in name else 0
+        if loaded_weight.dim() <= dim:
+            return loaded_weight
         mult = get_tensor_model_parallel_world_size() * step
         pad = cdiv(loaded_weight.shape[dim], mult) * mult - loaded_weight.shape[dim]
         if pad == 0:
@@ -1512,6 +1514,9 @@ def _linear_scale_param_name(vllm_config: VllmConfig, expert_dtype: str) -> str:
     return "weight_scale" if use_mxfp8 else "weight_scale_inv"
 
 
+HEAD_PIECES = r"^head\.(trellis|suh|svh|mul1|mcg)$"
+
+
 def _make_deepseek_v4_weights_mapper(
     expert_dtype: str, linear_scale_name: str = "weight_scale_inv"
 ) -> WeightsMapper:
@@ -1544,6 +1549,9 @@ def _make_deepseek_v4_weights_mapper(
             re.compile(r"(engram\.embed)\.scale$"): r"\1_tokens.weight_scale_inv",
             re.compile(r"\.scale$"): f".{linear_scale_name}",
         }
+    # A quantized head stored as pieces (e.g. EXL3: head.trellis / suh / svh / mul1)
+    # loads into lm_head like head.weight does.
+    scale_regex[re.compile(HEAD_PIECES)] = r"lm_head.\1"
     return WeightsMapper(
         orig_to_new_prefix={
             "layers.": "model.layers.",
@@ -1646,9 +1654,12 @@ class DeepseekV41LLMForCausalLM(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
         )
         if get_pp_group().is_last_rank:
+            # The quant config may quantize the head (a no-op for the checkpoint's own FP8 config, which
+            # hands embeddings no method). The DSpark drafter shares this module, so it reads the same head.
             self.lm_head = ParallelLMHead(
                 config.vocab_size,
                 config.hidden_size,
+                quant_config=vllm_config.quant_config,
                 prefix=maybe_prefix(prefix, "lm_head"),
             )
         else:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import glob
 import os
+import re
 import time
 from collections.abc import Callable, Generator, Iterable
 from typing import TYPE_CHECKING, cast
@@ -309,6 +310,13 @@ class DefaultModelLoader(BaseModelLoader):
                 self.load_config.use_tqdm_on_load,
             )
         elif use_safetensors:
+            if source.is_unused_weight is not None and (
+                self.load_config.load_format in ("fastsafetensors", "instanttensor")
+                or extra_config.get("enable_multithread_load")
+            ):
+                raise ValueError(
+                    "Selective tensor loading requires the lazy safetensors loader"
+                )
             if self.load_config.load_format == "fastsafetensors":
                 weights_iterator = fastsafetensors_weights_iterator(
                     hf_weights_files,
@@ -340,6 +348,7 @@ class DefaultModelLoader(BaseModelLoader):
                         self.load_config.use_tqdm_on_load,
                         self.load_config.safetensors_load_strategy,
                         local_expert_ids=self.local_expert_ids,
+                        is_unused_weight=source.is_unused_weight,
                         safetensors_prefetch_num_threads=(
                             self.load_config.safetensors_prefetch_num_threads
                         ),
@@ -367,20 +376,39 @@ class DefaultModelLoader(BaseModelLoader):
         if self.counter_before_loading_weights == 0.0:
             self.counter_before_loading_weights = time.perf_counter()
         # Apply the prefix.
-        return ((source.prefix + name, tensor) for (name, tensor) in weights_iterator)
+        def progress_weights():
+            from vllm.v1.worker.progress_heartbeat import beat
+
+            for name, tensor in weights_iterator:
+                beat("weight_loading")
+                yield source.prefix + name, tensor
+
+        return progress_weights()
 
     def get_all_weights(
         self,
         model_config: ModelConfig,
         model: nn.Module,
     ) -> Generator[tuple[str, torch.Tensor], None, None]:
+        unused = getattr(model, "is_unused_checkpoint_weight", None)
+        vllm_config = get_current_vllm_config_or_none()
+        engram = vllm_config.engram_config if vllm_config else None
+        if engram and engram.disk_offload:
+            previous_unused = unused
+            table_pattern = re.compile(r"^layers\.\d+\.engram\.embed\.(weight|scale)$")
+
+            def unused(name: str) -> bool:
+                return bool(table_pattern.fullmatch(name)) or bool(
+                    previous_unused and previous_unused(name)
+                )
+
         primary_weights = DefaultModelLoader.Source(
             model_config.model,
             model_config.revision,
             prefix="",
             fall_back_to_pt=getattr(model, "fall_back_to_pt_during_load", True),
             allow_patterns_overrides=getattr(model, "allow_patterns_overrides", None),
-            is_unused_weight=getattr(model, "is_unused_checkpoint_weight", None),
+            is_unused_weight=unused,
         )
         yield from self._get_weights_iterator(primary_weights)
 

@@ -1915,6 +1915,14 @@ def test_engram_draft_config_validates_target(monkeypatch, target_has_ple, expli
             assert config.engram_config.cpu_offload is True
 
 
+def test_engram_direct_io_requires_disk_and_changes_hash():
+    with pytest.raises(ValueError, match="disk_direct_io requires disk_offload"):
+        EngramConfig(disk_direct_io=True)
+    buffered = EngramConfig(disk_offload=True, disk_direct_io=False)
+    direct = EngramConfig(disk_offload=True, disk_direct_io=True)
+    assert buffered.compute_hash() != direct.compute_hash()
+    assert direct.disk_direct_io is True
+
 def test_engram_hash_tracks_execution_options():
     configs = [
         EngramConfig(cpu_offload=True),

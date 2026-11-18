@@ -42,6 +42,7 @@ from vllm.utils.torch_utils import current_stream
 from vllm.v1.hisparse.binding import release_hisparse_profiling_cache
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.spec_decode.dynamic.utils import build_dynamic_sd_schedule_lookup
+from vllm.v1.worker.gpu import short_ctx
 from vllm.v1.worker.gpu.attn_utils import build_slot_mappings_by_layer
 from vllm.v1.worker.gpu.block_table import BlockTables
 from vllm.v1.worker.gpu.cp_utils import prepare_dcp_local_seq_lens
@@ -83,6 +84,7 @@ class BatchExecutionDescriptor:
     num_active_loras: int = 0
     # Number of microbatches the batch is split into (DBO). 1 means no splitting.
     num_ubatches: int = 1
+    ctx_bound: int | None = None
 
 
 def make_cudagraph_stats(
@@ -116,6 +118,7 @@ def _is_compatible(
     num_active_loras: int,
     max_query_len: int | None,
     num_ubatches: int,
+    max_seq_len: int | None = None,
 ) -> bool:
     # desc.uniform_token_count=None (PIECEWISE) can handle any uniform_token_count
     # desc.num_reqs=None means no request padding needed (PIECEWISE)
@@ -135,6 +138,8 @@ def _is_compatible(
         and desc.num_tokens >= num_tokens
         and desc.num_active_loras == num_active_loras
         and desc.num_ubatches == num_ubatches
+        and (desc.ctx_bound is None or
+             (max_seq_len is not None and max_seq_len <= desc.ctx_bound))
     )
 
 
@@ -148,6 +153,7 @@ def has_compiled_submodule(model: nn.Module) -> bool:
 
 
 class CudaGraphManager:
+    SHORT_CTX_TWINS = False
     def __init__(
         self,
         vllm_config: VllmConfig,
@@ -373,8 +379,15 @@ class CudaGraphManager:
                 if ubatch_desc is not None:
                     descs_by_mode[mixed_mode].append(ubatch_desc)
 
+        if self.SHORT_CTX_TWINS and short_ctx.BOUNDS:
+            full = descs_by_mode.get(CUDAGraphMode.FULL, [])
+            full.extend(replace(d, ctx_bound=b) for d in list(full)
+                        if (d.uniform_token_count is not None or d.max_query_len is not None)
+                        and d.num_ubatches == 1 for b in short_ctx.BOUNDS)
+
         for mode, descs in descs_by_mode.items():
-            descs.sort(key=lambda d: d.num_tokens, reverse=True)
+            descs.sort(key=lambda d: (-d.num_tokens,
+                       -(d.ctx_bound if d.ctx_bound is not None else 1 << 62)))
             self._capture_descs[mode] = descs
 
         for mode in (CUDAGraphMode.FULL, CUDAGraphMode.PIECEWISE):
@@ -438,6 +451,7 @@ class CudaGraphManager:
 
         """
         with graph_capture(device=self.device), ExitStack() as stack:
+            stack.callback(short_ctx.set_capture_bound, None)
             if self.ubatch_runner is not None:
                 # Join parked threads on failure to avoid blocking later captures.
                 stack.callback(self.ubatch_runner.abort_pending_run)
@@ -460,6 +474,10 @@ class CudaGraphManager:
                 if is_global_first_rank():
                     descs = tqdm(descs, desc=f"{progress_bar_desc} ({mode.name})")
                 for desc in descs:
+                    from vllm.v1.worker.progress_heartbeat import beat
+
+                    beat("cuda_graph_capture", force=True)
+                    short_ctx.set_capture_bound(desc.ctx_bound)
                     # Prepare inputs and get forward function
                     forward_fn = create_forward_fn(desc, warmup=True)
 
@@ -542,6 +560,7 @@ class CudaGraphManager:
                     effective_loras,
                     max_query_len,
                     num_ubatches,
+                    short_ctx.dispatch_max_seq_len(),
                 ):
                     return desc
         return BatchExecutionDescriptor(
@@ -584,6 +603,7 @@ class CudaGraphManager:
 
 
 class ModelCudaGraphManager(CudaGraphManager):
+    SHORT_CTX_TWINS = True
     """CudaGraphManager with model-specific capture and hidden state management."""
 
     def __init__(

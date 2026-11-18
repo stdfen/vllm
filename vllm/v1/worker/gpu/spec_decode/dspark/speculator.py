@@ -31,6 +31,7 @@ from vllm.config import VllmConfig
 from vllm.config.compilation import CUDAGraphMode
 from vllm.logger import init_logger
 from vllm.v1.worker.gpu.sample.gumbel import gumbel_sample
+from vllm.v1.worker.gpu.spec_decode.depth_policy import depth_policy_requested
 from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
 from vllm.v1.worker.gpu.spec_decode.dspark.utils import load_dspark_model
 
@@ -104,7 +105,7 @@ class DSparkSpeculator(DFlashSpeculator):
                 device=self.device,
             )
         self.use_confidence_head = (
-            self.enable_adaptive_verification
+            (self.enable_adaptive_verification or depth_policy_requested())
             and model.model.confidence_head is not None
         )
         if self.use_confidence_head:
@@ -161,8 +162,10 @@ class DSparkSpeculator(DFlashSpeculator):
         # It returns False, having done nothing, for a step that the loop
         # below must run.
         sample_sequential = getattr(self.model, "sample_sequential", None)
-        if sample_sequential is not None and sample_sequential(
-            self, num_reqs, head_hidden
+        if (
+            not self.use_confidence_head
+            and sample_sequential is not None
+            and sample_sequential(self, num_reqs, head_hidden)
         ):
             return
 
@@ -189,7 +192,9 @@ class DSparkSpeculator(DFlashSpeculator):
             markov_embed = self.model.markov_embed(prev)
             if self.use_confidence_head:
                 confidence_markov_embeds.append(markov_embed)
-            bias = self.model.markov_bias(markov_embed)
+            bias_by_ids = getattr(self.model, "markov_bias_for_ids", None)
+            bias = (bias_by_ids(prev, markov_embed) if bias_by_ids is not None
+                    else self.model.markov_bias(markov_embed))
             logits_i = base_logits[:, i] + bias
             if hasattr(self.model, "apply_output_logit_transform"):
                 logits_i = self.model.apply_output_logit_transform(logits_i)
