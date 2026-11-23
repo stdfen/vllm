@@ -51,6 +51,12 @@ def init_speculator(
 
         return DFlashSpeculator(vllm_config, device)
     elif speculative_config.method == "dspark":
+        if speculative_config.dspark_implementation == "tensorfold_full":
+            from vllm.v1.worker.gpu.spec_decode.tensorfold_dsv41.speculator import (
+                TensorFoldDSV41Speculator,
+            )
+
+            return TensorFoldDSV41Speculator(vllm_config, device)
         from vllm.v1.worker.gpu.spec_decode.dspark.speculator import (
             DSparkSpeculator,
         )

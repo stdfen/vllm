@@ -25,8 +25,17 @@ steps:
   - tests/test_vllm_port
   - tests/jit_monitor/test_hooks.py
   - tests/jit_monitor/test_hooks_gpu.py
+  - tests/v1/spec_decode/
+  - vllm/v1/worker/gpu/spec_decode/tensorfold_dsv41/
+  - vllm/v1/worker/gpu/spec_decode/dspark/prefix_policy.py
+  - vllm/v1/worker/gpu/spec_decode/dspark/tensorfold_verification.py
+  - vllm/v1/worker/gpu/spec_decode/adaptive_verification.py
+  - vllm/v1/worker/gpu/model_runner.py
+  - vllm/v1/worker/gpu/cudagraph_utils.py
+  - vllm/v1/worker/gpu_worker.py
   commands:
   - pytest -v -s engine test_sequence.py test_config.py test_logger.py test_vllm_port.py jit_monitor/test_hooks.py jit_monitor/test_hooks_gpu.py
+  - pytest -v --noconftest v1/spec_decode/test_dspark_prefix_policy.py v1/spec_decode/test_tensorfold_dsv41.py
   mirror:
     amd:
       label: ":amd: (MI355 DPX) Engine Core"

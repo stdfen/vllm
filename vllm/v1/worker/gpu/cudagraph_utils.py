@@ -138,8 +138,10 @@ def _is_compatible(
         and desc.num_tokens >= num_tokens
         and desc.num_active_loras == num_active_loras
         and desc.num_ubatches == num_ubatches
-        and (desc.ctx_bound is None or
-             (max_seq_len is not None and max_seq_len <= desc.ctx_bound))
+        and (
+            desc.ctx_bound is None
+            or (max_seq_len is not None and max_seq_len <= desc.ctx_bound)
+        )
     )
 
 
@@ -154,6 +156,7 @@ def has_compiled_submodule(model: nn.Module) -> bool:
 
 class CudaGraphManager:
     SHORT_CTX_TWINS = False
+
     def __init__(
         self,
         vllm_config: VllmConfig,
@@ -305,6 +308,14 @@ class CudaGraphManager:
         else:
             decode_query_lens = [self.decode_query_len]
 
+        if speculative_config is not None and (
+            speculative_config.dspark_verification_policy == "tensorfold"
+            or speculative_config.dspark_implementation == "tensorfold_full"
+        ):
+            # Host-known compact prefixes use one uniform graph per depth.
+            # Nonuniform batches cannot match these descriptors.
+            decode_query_lens = list(range(1, self.decode_query_len + 1))
+
         capture_varlen_decode = (
             separate_decode_routine and bool(decode_mode) and self.varlen_decode
         )
@@ -381,13 +392,21 @@ class CudaGraphManager:
 
         if self.SHORT_CTX_TWINS and short_ctx.BOUNDS:
             full = descs_by_mode.get(CUDAGraphMode.FULL, [])
-            full.extend(replace(d, ctx_bound=b) for d in list(full)
-                        if (d.uniform_token_count is not None or d.max_query_len is not None)
-                        and d.num_ubatches == 1 for b in short_ctx.BOUNDS)
+            full.extend(
+                replace(d, ctx_bound=b)
+                for d in list(full)
+                if (d.uniform_token_count is not None or d.max_query_len is not None)
+                and d.num_ubatches == 1
+                for b in short_ctx.BOUNDS
+            )
 
         for mode, descs in descs_by_mode.items():
-            descs.sort(key=lambda d: (-d.num_tokens,
-                       -(d.ctx_bound if d.ctx_bound is not None else 1 << 62)))
+            descs.sort(
+                key=lambda d: (
+                    -d.num_tokens,
+                    -(d.ctx_bound if d.ctx_bound is not None else 1 << 62),
+                )
+            )
             self._capture_descs[mode] = descs
 
         for mode in (CUDAGraphMode.FULL, CUDAGraphMode.PIECEWISE):

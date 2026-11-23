@@ -3,6 +3,7 @@
 
 import copy
 import functools
+import math
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal, Self, get_args
 
@@ -586,6 +587,24 @@ class SpeculativeConfig:
     """Whether to adaptively size the draft-verification budget from per-request
     confidence. Currently only supported for method="dspark"."""
 
+    dspark_verification_policy: Literal["native", "tensorfold"] = "native"
+    """Opt-in TensorFold-style prefix selection with compact verification.
+    Requires method='dspark' and enable_adaptive_verification=True. The native
+    policy and the separate VLLM_DSPARK_DEPTH_POLICY path remain the default."""
+
+    dspark_implementation: Literal["native", "tensorfold_full"] = "native"
+    """Independent pinned TensorFold DSV4.1 request-lane algorithm.
+    Validated on GB10 TP2 with C1 and sustained C2/C4/C8 workloads.
+    Reserves 5 lookahead rows for head and suffix copies (6-row exact windows).
+    Does not use vLLM's DSpark proposer/adaptive manager/rejection sampler."""
+
+    dspark_tensorfold_verify_ms: list[float] | None = None
+    """Optional total-live-row verify costs in ms, starting at one row.
+    Without an override, use vLLM's startup-profiled, graph-padded costs."""
+
+    dspark_tensorfold_draft_ms: float | None = Field(default=None, ge=0)
+    """Optional cost of one parallel drafter pass, not a per-draft-token cost."""
+
     @staticmethod
     def _acceptance_length_to_rates(length: float, n: int) -> list[float]:
         """Mean acceptance length to unconditional per-position rates, using
@@ -682,6 +701,10 @@ class SpeculativeConfig:
         factors.append(uses_aux_hidden_states)
         if self.method == "dspark":
             factors.append(self.enable_adaptive_verification)
+            if self.dspark_implementation != "native":
+                factors.append(self.dspark_implementation)
+            if self.dspark_verification_policy != "native":
+                factors.append(self.dspark_verification_policy)
 
         if self.draft_model_config is not None:
             factors.append(self.draft_model_config.compute_hash())
@@ -1938,8 +1961,47 @@ class SpeculativeConfig:
             return AttentionBackendEnum[value.upper()]
         return value
 
+    def _verify_dspark_verification_policy(self) -> None:
+        if self.dspark_implementation == "tensorfold_full" and (
+            self.method != "dspark"
+            or self.num_speculative_tokens != 5
+            or self.enable_adaptive_verification
+            or self.dspark_verification_policy != "native"
+            or self.draft_sample_method != "greedy"
+            or self.rejection_sample_method != "standard"
+        ):
+            raise ValueError(
+                "tensorfold_full requires dspark, 5 reserved drafts, greedy "
+                "drafts, standard config, and no adaptive/legacy prefix policy"
+            )
+        if self.dspark_verification_policy == "native":
+            if (
+                self.dspark_tensorfold_verify_ms is not None
+                or self.dspark_tensorfold_draft_ms is not None
+            ):
+                raise ValueError("TensorFold costs require the tensorfold policy")
+            return
+        if self.method != "dspark" or not self.enable_adaptive_verification:
+            raise ValueError(
+                "tensorfold policy requires method='dspark' and "
+                "enable_adaptive_verification=True"
+            )
+        if self.rejection_sample_method != "standard":
+            raise ValueError("tensorfold policy requires standard rejection sampling")
+        if self.dspark_tensorfold_verify_ms is not None:
+            costs = self.dspark_tensorfold_verify_ms
+            if not costs or any(not math.isfinite(x) or x <= 0 for x in costs):
+                raise ValueError("TensorFold verify costs must be finite and positive")
+            if any(b < a for a, b in zip(costs, costs[1:])):
+                raise ValueError("TensorFold verify costs must be non-decreasing")
+        if self.dspark_tensorfold_draft_ms is not None and not math.isfinite(
+            self.dspark_tensorfold_draft_ms
+        ):
+            raise ValueError("TensorFold draft cost must be finite")
+
     @model_validator(mode="after")
     def _verify_args(self) -> Self:
+        self._verify_dspark_verification_policy()
         if self.tensor_parallel_size is not None:
             raise ValueError(
                 "'tensor_parallel_size' is not a valid argument in the "

@@ -990,14 +990,23 @@ class Worker(WorkerBase):
 
         # Warmup and tune the kernels used during model execution before
         # cuda graph capture.
-        kernel_warmup(self)
-
-        if self.use_v2_model_runner:  # noqa: SIM102
-            if self.vllm_config.kernel_config.enable_jit_warmup:
-                # A workspace resize after capture frees what the graphs point at.
-                warmup_kernels(
-                    self.model_runner, self.execute_model, self.sample_tokens
-                )
+        # Both attention warmup and generic JIT warmup submit synthetic mixed
+        # batches. Keep all of them outside the independent C1 lane state.
+        speculator = getattr(self.model_runner, "speculator", None)
+        tf_warmup = getattr(speculator, "tensorfold_full", False)
+        if tf_warmup:
+            speculator.set_warmup_mode(True)
+        try:
+            kernel_warmup(self)
+            if self.use_v2_model_runner:  # noqa: SIM102
+                if self.vllm_config.kernel_config.enable_jit_warmup:
+                    # A resize after capture frees its static workspace.
+                    warmup_kernels(
+                        self.model_runner, self.execute_model, self.sample_tokens
+                    )
+        finally:
+            if tf_warmup:
+                speculator.set_warmup_mode(False)
 
         cuda_graph_memory_bytes = 0
         if not self.model_config.enforce_eager:

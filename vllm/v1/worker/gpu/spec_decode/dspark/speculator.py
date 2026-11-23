@@ -108,6 +108,13 @@ class DSparkSpeculator(DFlashSpeculator):
             (self.enable_adaptive_verification or depth_policy_requested())
             and model.model.confidence_head is not None
         )
+        if (
+            self.speculative_config.dspark_verification_policy == "tensorfold"
+            and not self.use_confidence_head
+        ):
+            raise ValueError(
+                "TensorFold DSpark policy requires a trained confidence head"
+            )
         if self.use_confidence_head:
             # The acceptance estimator is not needed when a trained confidence head
             # is available.

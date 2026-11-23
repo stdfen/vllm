@@ -30,7 +30,6 @@ import torch
 import torch.nn as nn
 
 import vllm.envs as envs
-from vllm.v1.worker.gpu.engram_execution import serialize_disk_engram
 from vllm.compilation.breakable_cudagraph import BreakableCUDAGraphWrapper
 from vllm.compilation.counter import compilation_counter
 from vllm.compilation.cuda_graph import CUDAGraphStat, CUDAGraphWrapper
@@ -92,12 +91,12 @@ from vllm.v1.watermarking.spec_decode import (
 from vllm.v1.worker.block_table import get_block_table_width
 from vllm.v1.worker.cp_utils import check_attention_cp_compatibility
 from vllm.v1.worker.gpu import pcp_manager as pcp
+from vllm.v1.worker.gpu import short_ctx
 from vllm.v1.worker.gpu.async_utils import (
     AsyncOutput,
     AsyncPoolingOutput,
     StepTimingCollector,
 )
-from vllm.v1.worker.gpu import short_ctx
 from vllm.v1.worker.gpu.attn_utils import (
     FastPrefillHelper,
     build_slot_mappings_by_layer,
@@ -119,6 +118,7 @@ from vllm.v1.worker.gpu.cudagraph_utils import (
 )
 from vllm.v1.worker.gpu.dp_utils import DPSyncState, dispatch_cg_and_sync_dp
 from vllm.v1.worker.gpu.ec_connector import get_ec_connector
+from vllm.v1.worker.gpu.engram_execution import serialize_disk_engram
 from vllm.v1.worker.gpu.eplb_utils import EPLBController, step_eplb_after
 from vllm.v1.worker.gpu.input_batch import (
     InputBatch,
@@ -167,6 +167,10 @@ from vllm.v1.worker.gpu.spec_decode.adaptive_verification import (
     maybe_create_adaptive_verification_manager,
     resolve_adaptive_cudagraph_mode,
 )
+from vllm.v1.worker.gpu.spec_decode.depth_policy import (
+    DSparkDepthPolicy,
+    depth_policy_requested,
+)
 from vllm.v1.worker.gpu.spec_decode.eagle.eagle3_utils import (
     requires_aux_hidden_states,
     set_eagle3_aux_hidden_state_layers,
@@ -179,10 +183,6 @@ from vllm.v1.worker.gpu.spec_decode.speculator import DraftModelSpeculator
 from vllm.v1.worker.gpu.spec_decode.utils import (
     DraftTokensHandler,
     get_drafter_hidden_states,
-)
-from vllm.v1.worker.gpu.spec_decode.depth_policy import (
-    DSparkDepthPolicy,
-    depth_policy_requested,
 )
 from vllm.v1.worker.gpu.states import RequestState
 from vllm.v1.worker.gpu.structured_outputs import (
@@ -755,7 +755,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     "and no adaptive verification or batch-sharded sampling"
                 )
             self.depth_policy = DSparkDepthPolicy(
-                self.num_speculative_steps, self.max_num_reqs, self.device,
+                self.num_speculative_steps,
+                self.max_num_reqs,
+                self.device,
                 has_confidence=self.speculator.use_confidence_head,
             )
 
@@ -813,7 +815,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             cudagraph_mode,
             decode_query_len=self.decode_query_len,
             lora_capture_cases=self.lora_capture_cases,
-            varlen_decode=self.adaptive_verification is not None,
+            varlen_decode=(
+                self.adaptive_verification is not None
+                and not getattr(self.adaptive_verification, "host_compaction", False)
+            ),
             ubatch_runner=self.ubatch_runner,
         )
         if self.cache_config.kv_sharing_fast_prefill and self.pcp_manager is None:
@@ -1216,6 +1221,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return cuda_graph_size
 
     def _remove_request(self, req_id: str) -> bool:
+        if getattr(self.speculator, "tensorfold_full", False):
+            self.speculator.remove_request(req_id)
         # Call model_state.remove_request *before* req_states.remove_request
         # so the model_state can still look up the slot index.
         self.model_state.remove_request(req_id)
@@ -1402,6 +1409,21 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 num_toks = self.adaptive_verification.get_num_tokens(
                     num_tokens_per_req, draft_tokens
                 )
+                if getattr(self.adaptive_verification, "host_compaction", False):
+                    compact = self.adaptive_verification._prefix_batch
+                    assert compact is not None
+                    compact_scheduled_tokens = np.array(
+                        [sum(compact[r]) for r in req_ids], dtype=np.int32
+                    )
+                    max_query_len = int(compact_scheduled_tokens.max())
+            elif getattr(self.speculator, "tensorfold_full", False):
+                num_toks = self.speculator.get_num_tokens(
+                    num_tokens_per_req, draft_tokens
+                )
+                if not self.speculator.warming_up:
+                    max_query_len = max(
+                        row[0] + row[1] for row in self.speculator.batch_plan.values()
+                    )
 
         prefill_runs_as_decode_np = None
         decode_graph_eligible = not has_prefill
@@ -1495,6 +1517,17 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         adaptive_verification = self.adaptive_verification if draft_tokens else None
         num_scheduled_tokens_upper_bound = num_scheduled_tokens_np
         num_admitted_draft_tokens = None
+        if (
+            draft_tokens
+            and getattr(self.speculator, "tensorfold_full", False)
+            and not self.speculator.warming_up
+        ):
+            num_scheduled_tokens_np, cu_num_logits_np = self.speculator.compact_batch(
+                req_ids, num_draft_tokens_per_req
+            )
+            total_num_draft_tokens = int(num_draft_tokens_per_req.sum())
+            total_num_logits = num_reqs + total_num_draft_tokens
+            cu_num_logits = async_tensor_h2d(cu_num_logits_np, device=self.device)
         if adaptive_verification is not None:
             # num_scheduled_tokens represents the draft budget evenly distributed across
             # all verification requests, `reallocate_drafts` will unevenly assign the
@@ -1504,6 +1537,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     num_draft_tokens_per_req,
                     num_scheduled_tokens_np,
                     cu_num_logits_np,
+                    req_ids=req_ids,
                 )
             )
 
@@ -1646,6 +1680,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             ),
         )
         input_batch.depth_dead_rows = depth_dead_rows
+        if getattr(self.speculator, "tensorfold_full", False):
+            input_batch.tensorfold_target_graph = str(batch_desc.cg_mode)
+            input_batch.num_scheduled_tokens = num_scheduled_tokens_np
+            input_batch.max_query_len = int(num_scheduled_tokens_np.max())
         if self.pcp_manager is not None:
             input_batch = self.pcp_manager.partition_batch(input_batch, batch_desc)
         return input_batch
@@ -1694,6 +1732,27 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         input_batch: InputBatch,
         grammar_output: GrammarOutput | None,
     ) -> tuple[SamplerOutput, torch.Tensor, torch.Tensor]:
+        if getattr(self.speculator, "tensorfold_full", False):
+            if grammar_output is not None and not self.speculator.warming_up:
+                raise ValueError(
+                    "TensorFold full port has no structured-output adapter"
+                )
+            from vllm.v1.worker.gpu.spec_decode.tensorfold_dsv41.verify import (
+                verify_target,
+            )
+
+            logits = self.model.compute_logits(
+                hidden_states[input_batch.logits_indices]
+            )
+            output = verify_target(
+                logits,
+                input_batch,
+                self.sampler,
+                self.req_states,
+                self.num_speculative_steps,
+            )
+            self.speculator.record_target_output(input_batch, output, self.req_states)
+            return output, output.num_sampled, output.num_rejected
         if self.greedy_argmax is not None and self.greedy_argmax.applies(
             input_batch, grammar_output
         ):
@@ -1920,12 +1979,24 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             skip_compiled = True
 
         max_seq_len = None
-        if (short_ctx.BOUNDS and self.dp_size == 1 and self.pcp_manager is None
-                and batch_req_state is not None
-                and not batch_req_state.has_prefill and num_reqs > 0):
+        if (
+            short_ctx.BOUNDS
+            and self.dp_size == 1
+            and self.pcp_manager is None
+            and batch_req_state is not None
+            and not batch_req_state.has_prefill
+            and num_reqs > 0
+        ):
             idx = batch_req_state.idx_mapping_np
-            max_seq_len = int((self.req_states.num_computed_tokens_np[idx]
-                               + batch_req_state.num_scheduled_tokens).max()) + short_ctx.MARGIN
+            max_seq_len = (
+                int(
+                    (
+                        self.req_states.num_computed_tokens_np[idx]
+                        + batch_req_state.num_scheduled_tokens
+                    ).max()
+                )
+                + short_ctx.MARGIN
+            )
         short_ctx.set_dispatch_max_seq_len(max_seq_len)
 
         batch_desc, dp_sync_state = dispatch_cg_and_sync_dp(
@@ -2303,8 +2374,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         if self.depth_policy is not None and input_batch.num_draft_tokens > 0:
             self.depth_policy.observe(
-                input_batch.idx_mapping, num_sampled,
-                input_batch.num_draft_tokens_per_req, input_batch.num_reqs,
+                input_batch.idx_mapping,
+                num_sampled,
+                input_batch.num_draft_tokens_per_req,
+                input_batch.num_reqs,
             )
 
         if self.pp_handler is not None:
@@ -2438,7 +2511,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             if self.depth_policy is not None:
                 self.depth_policy.record(
                     self.speculator.draft_token_confidence_probs,
-                    input_batch.idx_mapping, input_batch.num_reqs,
+                    input_batch.idx_mapping,
+                    input_batch.num_reqs,
                 )
 
         if self.num_speculative_steps > 0:

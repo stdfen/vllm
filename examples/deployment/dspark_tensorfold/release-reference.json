@@ -1,0 +1,38 @@
+{
+  "release": "dspark-tensorfold-graph24-v1-20261123",
+  "image_tag": "local/vllm-dsv41:dspark-tensorfold-graph24-v1-20261123",
+  "base_image": "local/sudoingx-clean-port:tensorfold-full-runtime-v7-20261121",
+  "base_image_id": "sha256:ebb12adf6217882a615af3420c62f855c5a290d42448cd13f8a4cbc3437778c3",
+  "base_layers_sha256": "0510ef13a226957605b97b276a8905066f5b2a0127cad6a64adde2f4467256aa",
+  "git_head": "574524ce02affc442738cb4c83aa765d45489950",
+  "candidate_sha256": {
+    "core.py": "63bd9a6c3eb0911fda6c38fb6946ebc9c6b152e0b73fe935cd7efba508552fe1",
+    "head.py": "a2f708cc3489d8fb97df2828fafa20cedb15d2d12f6bcb86e88d8647bf9544f0",
+    "model_runner.py": "6c33a7850bc92af9178b61988bda17b234af0a865d0d609a3c70a999504c5ce2",
+    "speculator.py": "32369554fd043829795a54324c8f77093bd0364686f0460733b92b2af15126f9"
+  },
+  "installed_sha256": {
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/tensorfold_dsv41/__init__.py": "8fae0d3f27a220664694c994065aaca0dae98723f9ac4ed2e1cac14109ff97d9",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/tensorfold_dsv41/core.py": "63bd9a6c3eb0911fda6c38fb6946ebc9c6b152e0b73fe935cd7efba508552fe1",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/tensorfold_dsv41/head.py": "a2f708cc3489d8fb97df2828fafa20cedb15d2d12f6bcb86e88d8647bf9544f0",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/tensorfold_dsv41/sampling.py": "ec82f0173185a8e3addd33a247718fc465453c4eb9affd35b126ca9da656f079",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/tensorfold_dsv41/speculator.py": "32369554fd043829795a54324c8f77093bd0364686f0460733b92b2af15126f9",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/tensorfold_dsv41/verify.py": "c83e87655d8100e744eb8089caff3fda76acf6e1c3efec2d59d4320b8ddd2a24",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/model_runner.py": "6c33a7850bc92af9178b61988bda17b234af0a865d0d609a3c70a999504c5ce2",
+    "/usr/local/lib/python3.12/dist-packages/vllm/utils/jit_monitor.py": "4de96ab139aa98b74b7f29377022772d7f531a42d945bb825b5e7d49e8df246d",
+    "/opt/bench-helpers/warm_kernels.py": "df0b6e5d2b66d20a6b910cc64c67a51b893323631f193d38e658b28aaa68d912",
+    "/opt/ab/assets/markov_top_tokens.json": "0b6e71e638abd5abce2db433965bb5ff523cbbe92ed7ae54324a50ccaeffa19a",
+    "/opt/check_autotune_guard.py": "c22dd0226b724e1ec71ea915f80e65e331335699f895026cf7875f9fa0f792d2",
+    "/usr/local/lib/python3.12/dist-packages/vllm/config/speculative.py": "291ea45420f568550e83016e915928767f3389a6b49d963eef5bf013bce6c570",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/__init__.py": "54b41470d7bcebdc239172731b8d29d56d221784d99f58e018fc01062e572580",
+    "/usr/local/lib/python3.12/dist-packages/vllm/v1/worker/gpu/spec_decode/dspark/speculator.py": "6e9d27b0a76440603dda3192648537e219e538ee82f497eb620926e6096a055d"
+  },
+  "checkpoint_content_manifest_sha256": "0ec35d5479721a5433c89edb9620cbafcc6aa42fffb1454bee29077d5d59bc99",
+  "comparison_sha256": "74f275a6ec9f3ba838ca23835c24d98fc01278a7db1809ca14f8528bd91e9bba",
+  "method_sha256": "4593e1059fd5835a912fae0122e371b76aa6adc8ca2978ab9112a5923221d194",
+  "serving_jit_policy": "Prewarm before activation; warn on new runtime keys. Benchmark strict guard remains available.",
+  "model_weights_in_image": false,
+  "source_overlays_required": false,
+  "reference_release_image_id": "sha256:e8ec98062462d93222877c36ca21852d13bdfb87a1dc36384712712a288ac68e",
+  "reference_archive_sha256": "671d3a0addac7881f7f9ae7313c0b1ce9ca9dc851ed85cd089d69193455ead82"
+}

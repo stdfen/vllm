@@ -377,6 +377,8 @@ class AdaptiveVerificationManager:
         num_draft_tokens_per_req: np.ndarray,
         num_scheduled_tokens: np.ndarray,
         cu_num_logits_np: np.ndarray,
+        *,
+        req_ids: list[str] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Compact the CPU batch to the chosen draft budget.
 
@@ -504,12 +506,17 @@ def maybe_create_adaptive_verification_manager(
     if not enable_adaptive_verification:
         return None
 
+    spec = getattr(vllm_config, "speculative_config", None)
+    host_prefix_policy = (
+        spec is not None and spec.dspark_verification_policy == "tensorfold"
+    )
+
     # The selector rejects unsupported backends, but models that
     # hard-wire theirs (e.g. DeepSeek-V4) never go through it.
     backend = get_query_lens_mismatch_unsupported_backend(
         attn_groups, checked_layer_names=target_layer_names
     )
-    if backend is not None:
+    if backend is not None and not host_prefix_policy:
         raise ValueError(
             "Adaptive verification trims verification requests on device, which"
             f" the {backend} attention backend does not support. Pass "
@@ -533,7 +540,10 @@ def maybe_create_adaptive_verification_manager(
         additional_support, additional_backend = additional_attn_cg_support
         if additional_support != AttentionCGSupport.ALWAYS:
             unsupported = additional_backend, None
-    if unsupported is not None:
+    # Host compaction keeps both length tensors identical and dispatches only
+    # uniform graphs captured at that exact depth. Nonuniform batches fall back
+    # to eager; they never replay a varlen graph on an unsupported backend.
+    if unsupported is not None and not host_prefix_policy:
         backend, bound = unsupported
         allowed = "none" if bound is None else f"at most {bound}"
         raise ValueError(
@@ -543,10 +553,38 @@ def maybe_create_adaptive_verification_manager(
             "speculative config, or use a backend that does."
         )
 
-    return AdaptiveVerificationManager(
+    manager_cls = AdaptiveVerificationManager
+    policy_kwargs = {}
+    spec = getattr(vllm_config, "speculative_config", None)
+    if spec is not None and spec.dspark_verification_policy == "tensorfold":
+        from vllm.v1.worker.gpu.spec_decode.depth_policy import depth_policy_requested
+
+        if depth_policy_requested():
+            raise ValueError("Unset VLLM_DSPARK_DEPTH_POLICY for the tensorfold policy")
+        parallel = vllm_config.parallel_config
+        if (
+            parallel.data_parallel_size != 1
+            or parallel.prefill_context_parallel_size != 1
+            or parallel.enable_batch_sharded_sampling
+        ):
+            raise ValueError(
+                "TensorFold DSpark policy requires DP1/PCP1 and no sharding"
+            )
+        from vllm.v1.worker.gpu.spec_decode.dspark.tensorfold_verification import (
+            TensorFoldVerificationManager,
+        )
+
+        manager_cls = TensorFoldVerificationManager
+        policy_kwargs = {
+            "verify_ms": spec.dspark_tensorfold_verify_ms,
+            "draft_ms": spec.dspark_tensorfold_draft_ms,
+        }
+        logger.info("Using experimental TensorFold DSpark compact-prefix policy")
+    return manager_cls(
         req_states,
         query_start_loc,
         num_bonus_tokens,
         max_total_logits=max_total_logits,
         copy_admitted_drafts_to_host=copy_admitted_drafts_to_host,
+        **policy_kwargs,
     )
