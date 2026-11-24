@@ -1,0 +1,128 @@
+diff --git a/docs/features/speculative_decoding/tree_dflash2.md b/docs/features/speculative_decoding/tree_dflash2.md
+index e7b9c3c6da..3d260e46b8 100644
+--- a/docs/features/speculative_decoding/tree_dflash2.md
++++ b/docs/features/speculative_decoding/tree_dflash2.md
+@@ -56,6 +56,13 @@ packed graph replay. Ordinary speculative counters report scheduled slots
+ and committed tokens. They do not distinguish tree rows, and the ordinary
+ V2 CUDA graph counters do not cover the dedicated graph.
+ 
++In TensorFold mode, `tree_dflash2_tensorfold_compile_prefill` enables the
++vLLM-compiled target forward for batches containing prefill, including mixed
++prefill and decode. Omit `--enforce-eager` and pass
++`--compilation-config '{"mode":"VLLM_COMPILE","cudagraph_mode":"NONE"}'`.
++Decode-only batches keep the TensorFold verifier and its dedicated Graph
++settings.
++
+ For service qualification, compare `return_token_ids` against an eager
+ target-only run with the same target, KV dtype, and greedy requests. Cover
+ single-request and batched generation, partial acceptance, a winning sibling,
+diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
+index 2699697dbb..3d89f7dd5b 100644
+--- a/vllm/config/speculative.py
++++ b/vllm/config/speculative.py
+@@ -592,6 +592,9 @@ class SpeculativeConfig:
+     tree_dflash2_mode: Literal["replay", "packed", "graph", "tensorfold"] = "replay"
+     """Tree verifier execution mode. The native TensorFold mode can verify 31 nodes."""
+ 
++    tree_dflash2_tensorfold_compile_prefill: bool = False
++    """Compile target forwards for batches containing prefill in TensorFold mode."""
++
+     tree_dflash2_tensorfold_cuda_graph: bool = False
+     """Capture and replay eligible TensorFold target verification shapes."""
+ 
+@@ -2051,6 +2054,13 @@ class SpeculativeConfig:
+                 f"than zero ({self.num_speculative_tokens})."
+             )
+ 
++        if self.tree_dflash2_tensorfold_compile_prefill and not (
++            self.enable_tree_dflash2 and self.tree_dflash2_mode == "tensorfold"
++        ):
++            raise ValueError(
++                "tree_dflash2_tensorfold_compile_prefill requires "
++                "Tree-DFlash2 mode=tensorfold."
++            )
+         if self.tree_dflash2_tensorfold_batch_device_commit and not (
+             self.enable_tree_dflash2 and self.tree_dflash2_mode == "tensorfold"
+         ):
+diff --git a/vllm/config/vllm.py b/vllm/config/vllm.py
+index 8836b98043..6ff5ffdb0f 100644
+--- a/vllm/config/vllm.py
++++ b/vllm/config/vllm.py
+@@ -3159,12 +3159,23 @@ class VllmConfig:
+         model = self.model_config
+         parallel = self.parallel_config
+         cache = self.cache_config
++        compile_prefill = spec.tree_dflash2_tensorfold_compile_prefill
++        if compile_prefill and (
++            model is None
++            or model.enforce_eager
++            or self.compilation_config.mode != CompilationMode.VLLM_COMPILE
++            or self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
++        ):
++            raise ValueError(
++                "Compiled TensorFold prefill requires VLLM_COMPILE, "
++                "outer cudagraph_mode=NONE and enforce_eager=False."
++            )
+         if (
+             not current_platform.is_cuda()
+             or not self.use_v2_model_runner
+             or model is None
+             or model.hf_text_config.model_type != "qwen3_5_text"
+-            or not model.enforce_eager
++            or (not model.enforce_eager and not compile_prefill)
+             or model.supports_multimodal_inputs
+             or model.enable_prompt_embeds
+             or model.logits_processors
+@@ -3183,7 +3194,8 @@ class VllmConfig:
+         ):
+             raise ValueError(
+                 "Tree-DFlash2 requires a single CUDA GPU, V2 Model Runner, "
+-                "and a Qwen3.5/3.8 dense text target with --enforce-eager, "
++                "and a Qwen3.5/3.8 dense text target with --enforce-eager "
++                "or compiled TensorFold prefill, "
+                 "--no-async-scheduling and --no-enable-prefix-caching. "
+                 "Multimodal inputs, prompt embeddings, custom logits "
+                 "processors, LoRA, cache transfer and watermarking "
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 71098d6d92..812d1c1451 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -304,6 +304,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         self.speculator = None
+         self.tree_dflash2: TreeDFlash2 | None = None
+         self.tensorfold_tree: TensorFoldTreeDFlash2 | None = None
++        self.tensorfold_compile_prefill = (
++            self.speculative_config is not None
++            and self.speculative_config.tree_dflash2_tensorfold_compile_prefill
++        )
+         self.use_aux_hidden_state_outputs = False
+         if self.speculative_config is not None:
+             tensorfold_tree = (
+@@ -781,8 +785,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             self.kv_cache_config,
+             use_replayssm=self.cache_config.use_replayssm,
+         )
++        has_compiled_target = has_compiled_submodule(self.model)
++        if self.tensorfold_compile_prefill and not has_compiled_target:
++            raise RuntimeError(
++                "Compiled TensorFold prefill requires a compiled target."
++            )
+         piecewise_capture_available = bool(
+-            envs.VLLM_USE_BREAKABLE_CUDAGRAPH or has_compiled_submodule(self.model)
++            envs.VLLM_USE_BREAKABLE_CUDAGRAPH or has_compiled_target
+         )
+         if self.adaptive_verification is not None:
+             self.compilation_config.cudagraph_mode = resolve_adaptive_cudagraph_mode(
+@@ -1877,6 +1886,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             )
+ 
+         skip_compiled = False
++        if self.tensorfold_compile_prefill and batch_req_state is not None:
++            # Tree verification needs the eager forward and its dynamic metadata.
++            # A mixed batch already uses the regular linear target forward.
++            skip_compiled = not batch_req_state.has_prefill
++            if not skip_compiled:
++                logger.info_once("TensorFold dispatched a compiled prefill batch.")
+         if self.is_encoder_decoder and scheduler_output.scheduled_encoder_inputs:
+             # Encoder-decoder models such as Whisper should run eager/non-compiled
+             # when encoder inputs are scheduled, because this step updates

@@ -1,0 +1,593 @@
+diff --git a/docs/features/speculative_decoding/tree_dflash2.md b/docs/features/speculative_decoding/tree_dflash2.md
+index 3d260e46b8..d5c82d1161 100644
+--- a/docs/features/speculative_decoding/tree_dflash2.md
++++ b/docs/features/speculative_decoding/tree_dflash2.md
+@@ -122,10 +122,20 @@ and 7/8 share buckets 6 and 8. GDN scratch slots share the existing 0, 2, and
+ 4 launch sizes. Exact tree paths, per-request positions, and the original
+ graph-count limits are retained.
+ 
++Set `"tree_dflash2_tensorfold_batch_graph_buckets": true` to apply the same
++short-prefix capacities to real batches of two through eight requests. Trees
++may have different widths up to 16 rows. Captures retain the actual batch
++size and replay only when the tensor shapes and launch parameters match.
++An independent bank keeps at most one additional graph per batch size.
++If the original C8 bucket is also enabled, full-width C8 batches continue
++using it. With `TF_VERIFY_GRAPH_METRICS=1`, the
++`vllm:tensorfold_batch_graph_bucket_total` counter reports execution by
++batch size and route for the additional buckets.
++
+ Set `"tree_dflash2_tensorfold_c1_graph_bucket": true` with CUDA Graph to reuse
+ one launch shape across committed prefix lengths up to 4096 tokens for a
+ single request. The page table, tree paths, and actual lengths are refreshed
+-on each replay. Multi-request batches and longer contexts use exact shapes.
++on each replay. Multi-request batches use the corresponding settings above.
+ 
+ Set `"tree_dflash2_tensorfold_c1_expand_graph_bank": true` with the C1 Graph
+ bucket to retain up to six recurring verification shapes in a separate bank.
+diff --git a/tests/v1/spec_decode/test_tensorfold_tree_cuda.py b/tests/v1/spec_decode/test_tensorfold_tree_cuda.py
+index d7d2fa0a78..fd1874dc19 100644
+--- a/tests/v1/spec_decode/test_tensorfold_tree_cuda.py
++++ b/tests/v1/spec_decode/test_tensorfold_tree_cuda.py
+@@ -446,7 +446,7 @@ def test_tensorfold_paged_attention_graph_updates_long_prefixes():
+ 
+ 
+ @pytest.mark.skipif(not current_platform.is_cuda(), reason="Requires CUDA Triton.")
+-def test_tensorfold_c8_bucketed_attention_refreshes_full_chunks():
++def test_tensorfold_batch_bucketed_attention_refreshes_full_chunks():
+     attention = pytest.importorskip("tensorfold.cuda.kernels.attention")
+     ops = pytest.importorskip(
+         "vllm.v1.worker.gpu.spec_decode.dflash2.tensorfold_attention"
+@@ -454,38 +454,41 @@ def test_tensorfold_c8_bucketed_attention_refreshes_full_chunks():
+     device = torch.device("cuda")
+     rng = torch.Generator(device=device).manual_seed(11230)
+     page, h, hk, d = 16, 4, 2, 128
+-    q, k, v = [
+-        torch.randn(128, heads, d, device=device, generator=rng).bfloat16()
+-        for heads in (h, hk, hk)
+-    ]
+     scales = torch.tensor([0.5, 2.0], device=device)
+-    chain = tuple(range(-1, 15))
+-    fork = (-1, 0, 0, *range(2, 15))
+ 
+-    def launch(cache, blocks, plan, out, scratch):
+-        ops.paged_attention(
+-            q, k, v, cache, blocks, plan, *scales, d**-0.5, out, scratch
+-        )
++    def check_replay(widths, chunks):
++        requests = len(widths)
++        q, k, v = [
++            torch.randn(sum(widths), heads, d, device=device, generator=rng).bfloat16()
++            for heads in (h, hk, hk)
++        ]
++
++        def launch(cache, blocks, plan, out, scratch):
++            ops.paged_attention(
++                q, k, v, cache, blocks, plan, *scales, d**-0.5, out, scratch
++            )
+ 
+-    for chunks in (6, 8):
+         columns = chunks * attention.CHUNK // page
+-        pages = 8 * columns
+-        cache = torch.randn(
+-            pages, hk, page, 2 * d, device=device, generator=rng
+-        ).to(torch.float8_e4m3fn)
++        pages = requests * columns
++        cache = torch.randn(pages, hk, page, 2 * d, device=device, generator=rng).to(
++            torch.float8_e4m3fn
++        )
+         blocks = (
+-            torch.randperm(pages, device=device, generator=rng).view(8, columns).int()
++            torch.randperm(pages, device=device, generator=rng)
++            .view(requests, columns)
++            .int()
+         )
+         base = (chunks - 2) * attention.CHUNK
+-        lengths = [base + i for i in range(8)]
+-        bucket = ops.c8_graph_attention_plan(
+-            [chain] * 8, lengths, h // hk, chunks, device
++        lengths = [base + i for i in range(requests)]
++        parents = [tuple(range(-1, width - 1)) for width in widths]
++        bucket = ops.batch_graph_attention_plan(
++            parents, lengths, h // hk, chunks, device
+         )
+         output = torch.empty_like(q)
+         workspace = ops.partials(q, bucket)
+ 
+         launch(cache, blocks, bucket, output, workspace)
+-        exact = attention.plan([chain] * 8, lengths, h // hk, device)
++        exact = attention.plan(parents, lengths, h // hk, device)
+         expected = torch.empty_like(q)
+         launch(cache, blocks, exact, expected, ops.partials(q, exact))
+         torch.testing.assert_close(output, expected, atol=0, rtol=0)
+@@ -493,9 +496,14 @@ def test_tensorfold_c8_bucketed_attention_refreshes_full_chunks():
+         graph = torch.cuda.CUDAGraph()
+         with torch.cuda.graph(graph):
+             launch(cache, blocks, bucket, output, workspace)
+-        lengths = [base + attention.CHUNK + 11 * i for i in range(8)]
+-        parents = [chain, fork] * 4
+-        refreshed = ops.c8_graph_attention_plan(
++        lengths = [base + attention.CHUNK + 11 * i for i in range(requests)]
++        parents = [
++            (-1, 0, 0, *range(2, width - 1))
++            if width >= 3
++            else tuple(range(-1, width - 1))
++            for width in reversed(widths)
++        ]
++        refreshed = ops.batch_graph_attention_plan(
+             parents, lengths, h // hk, chunks, device
+         )
+         assert bucket.items.shape == refreshed.items.shape
+@@ -508,9 +516,14 @@ def test_tensorfold_c8_bucketed_attention_refreshes_full_chunks():
+         launch(cache, blocks, exact, expected, ops.partials(q, exact))
+         torch.testing.assert_close(output, expected, atol=0, rtol=0)
+ 
++    for chunks in (6, 8):
++        check_replay([16] * 8, chunks)
++        for requests in range(2, 9):
++            check_replay([16] + [1 + i for i in range(requests - 1)], chunks)
++
+ 
+ @pytest.mark.skipif(not current_platform.is_cuda(), reason="Requires CUDA.")
+-def test_tensorfold_c8_gdn_slots_share_one_graph():
++def test_tensorfold_batch_gdn_slots_share_one_graph():
+     from dataclasses import replace
+ 
+     gdn = pytest.importorskip("tensorfold.cuda.kernels.gdn")
+@@ -519,36 +532,51 @@ def test_tensorfold_c8_gdn_slots_share_one_graph():
+     )
+     device = torch.device("cuda")
+     rng = torch.Generator(device=device).manual_seed(75)
+-    q, k, v = [
+-        torch.randn(128, 2, 128, device=device, generator=rng).mul_(0.1).bfloat16()
+-        for _ in range(3)
+-    ]
+-    g = torch.full((128, 2), 0.9, device=device)
+-    beta = torch.full_like(g, 0.2)
+     first = (-1, 0, 1, 1, 1, 4, 0, 4, 4, 8, 2, 1, 9, 9, 10, 3)
+     second = (-1, 0, 0, 0, 3, 1, 1, 4, 7, 5, 0, 0, 4, 7, 4, 3)
+-    plans = [gdn.plan([tree] * 8, device) for tree in (first, second)]
+-    assert [plan.slots for plan in plans] == [3, 4]
+     assert verify.gdn_slot_bucket(0) == 0
+     assert verify.gdn_slot_bucket(3) == verify.gdn_slot_bucket(4) == 4
+-    states = [
+-        torch.randn(2, 128, 128, device=device, generator=rng).mul_(0.1)
+-        for _ in range(8)
+-    ]
+-    pointers = gdn.to_device(gdn.pointers(states), torch.int64, device)
+-    captured_plan = replace(plans[0], entries=plans[0].entries.clone(), slots=4)
+ 
+-    def run(plan):
+-        return gdn.tree(q, k, v, g, beta, plan, table=pointers)
++    def check_replay(widths):
++        q, k, v = [
++            torch.randn(sum(widths), 2, 128, device=device, generator=rng)
++            .mul_(0.1)
++            .bfloat16()
++            for _ in range(3)
++        ]
++        g = torch.full((sum(widths), 2), 0.9, device=device)
++        beta = torch.full_like(g, 0.2)
++        before = gdn.plan([first[:width] for width in widths], device)
++        updated = gdn.plan([second[:width] for width in reversed(widths)], device)
++        assert [before.slots, updated.slots] == [3, 4]
++        states = [
++            torch.randn(2, 128, 128, device=device, generator=rng).mul_(0.1)
++            for _ in widths
++        ]
++        pointers = gdn.to_device(gdn.pointers(states), torch.int64, device)
++        captured_plan = replace(
++            before,
++            entries=before.entries.clone(),
++            starts=before.starts.clone(),
++            slots=4,
++        )
+ 
+-    torch.testing.assert_close(run(captured_plan), run(plans[0]), atol=0, rtol=0)
+-    graph = torch.cuda.CUDAGraph()
+-    with torch.cuda.graph(graph):
+-        out = run(captured_plan)
+-    captured_plan.entries.copy_(plans[1].entries)
+-    pointers.copy_(gdn.to_device(gdn.pointers(states[::-1]), torch.int64, device))
+-    graph.replay()
+-    torch.testing.assert_close(out, run(plans[1]), atol=0, rtol=0)
++        def run(plan):
++            return gdn.tree(q, k, v, g, beta, plan, table=pointers)
++
++        torch.testing.assert_close(run(captured_plan), run(before), atol=0, rtol=0)
++        graph = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(graph):
++            out = run(captured_plan)
++        captured_plan.entries.copy_(updated.entries)
++        captured_plan.starts.copy_(updated.starts)
++        pointers.copy_(gdn.to_device(gdn.pointers(states[::-1]), torch.int64, device))
++        graph.replay()
++        torch.testing.assert_close(out, run(updated), atol=0, rtol=0)
++
++    check_replay([16] * 8)
++    for requests in range(2, 9):
++        check_replay([16] + [3 + i for i in range(requests - 1)])
+ 
+ 
+ @pytest.mark.skipif(not current_platform.is_cuda(), reason="Requires CUDA Triton.")
+@@ -1317,8 +1345,7 @@ def test_tensorfold_batched_device_commit_matches_reference():
+     def ints(values):
+         return torch.tensor(values, dtype=torch.int64, device=device)
+ 
+-    # C8 Graph replay and an ordinary smaller batch use identical slot semantics.
+-    for streams, capture in ((8, True), (2, False)):
++    for streams, capture in ((2, False), (2, True), (4, True), (6, True), (8, True)):
+         rows = 4 * streams
+         nslots = 2 + 16 * streams
+         records = []
+diff --git a/tests/v1/spec_decode/test_tensorfold_tree_plan.py b/tests/v1/spec_decode/test_tensorfold_tree_plan.py
+index b7343be82f..fd386948ec 100644
+--- a/tests/v1/spec_decode/test_tensorfold_tree_plan.py
++++ b/tests/v1/spec_decode/test_tensorfold_tree_plan.py
+@@ -7,7 +7,9 @@ from vllm.v1.worker.gpu.spec_decode.dflash2.tensorfold_plan import (
+     TreeBatchPlan,
+     TreeWindow,
+     VerifyCosts,
++    batch_attention_chunk_bucket,
+     c8_attention_chunk_bucket,
++    can_capture_batch_verification_graph,
+     can_capture_verification_graph,
+     is_long_verification_graph,
+ )
+@@ -31,6 +33,45 @@ def test_short_c8_attention_bucket_boundaries(lengths, widths, expected):
+     assert c8_attention_chunk_bucket(lengths, widths, 512) == expected
+ 
+ 
++@pytest.mark.parametrize("requests", range(2, 9))
++def test_short_multi_request_bucket_keeps_variable_widths(requests):
++    lengths = [3057, 3040] + [2048] * (requests - 2)
++    widths = [1, 16] + [7] * (requests - 2)
++    assert batch_attention_chunk_bucket(lengths, widths, 512) == 6
++    widths[0], widths[1] = widths[1], widths[0]
++    assert batch_attention_chunk_bucket(lengths, widths, 512) == 8
++
++
++@pytest.mark.parametrize(
++    ("lengths", "widths", "expected"),
++    [
++        ([3056, 3057], [16, 15], 6),
++        ([3056, 3057], [15, 16], 8),
++        ([4080, 2048], [16, 1], 8),
++        ([4081, 2048], [16, 1], None),
++        ([8192, 8192], [8, 16], None),
++        ([2047, 2048], [8, 16], None),
++        ([2048], [16], None),
++        ([2048, 2048], [16], None),
++        ([2048, 2048], [16, 0], None),
++        ([2048, 2048], [16, 17], None),
++        ([2048] * 9, [16] * 9, None),
++    ],
++)
++def test_multi_request_bucket_uses_per_request_extent(lengths, widths, expected):
++    assert batch_attention_chunk_bucket(lengths, widths, 512) == expected
++
++
++def test_multi_request_graph_bank_limits_captures_per_real_batch_size():
++    shapes = []
++    for requests in (8, 3, 7, 4, 2, 6, 5):
++        assert can_capture_batch_verification_graph(shapes, requests)
++        shapes.append((requests, 6, 4))
++        assert not can_capture_batch_verification_graph(shapes, requests)
++    assert not can_capture_batch_verification_graph(shapes, 1)
++    assert not can_capture_batch_verification_graph(shapes, 9)
++
++
+ @pytest.mark.parametrize(
+     ("requests", "rows", "chunks", "eligible"),
+     [
+diff --git a/vllm/config/speculative.py b/vllm/config/speculative.py
+index 3d89f7dd5b..b612c62f37 100644
+--- a/vllm/config/speculative.py
++++ b/vllm/config/speculative.py
+@@ -604,6 +604,9 @@ class SpeculativeConfig:
+     tree_dflash2_tensorfold_c8_graph_buckets: bool = False
+     """Bucket attention and recurrent scratch sizes for full short-prefix C8."""
+ 
++    tree_dflash2_tensorfold_batch_graph_buckets: bool = False
++    """Bucket short-prefix verifier graphs for real batches of 2–8 requests."""
++
+     tree_dflash2_tensorfold_batch_device_commit: bool = False
+     """Select and commit accepted paths on the GPU for 2–8 TensorFold requests."""
+ 
+@@ -2090,6 +2093,14 @@ class SpeculativeConfig:
+                 "tree_dflash2_tensorfold_c8_graph_buckets requires "
+                 "tree_dflash2_tensorfold_cuda_graph."
+             )
++        if (
++            self.tree_dflash2_tensorfold_batch_graph_buckets
++            and not self.tree_dflash2_tensorfold_cuda_graph
++        ):
++            raise ValueError(
++                "tree_dflash2_tensorfold_batch_graph_buckets requires "
++                "tree_dflash2_tensorfold_cuda_graph."
++            )
+         if (
+             self.tree_dflash2_tensorfold_c1_graph_bucket
+             and not self.tree_dflash2_tensorfold_cuda_graph
+diff --git a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_attention.py b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_attention.py
+index c83ed5aeec..395f3a640e 100644
+--- a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_attention.py
++++ b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_attention.py
+@@ -36,7 +36,7 @@ def c1_graph_attention_plan(
+     return from_packed(packed.to(device, non_blocking=True), 1, width, items, chunks)
+ 
+ 
+-def c8_graph_attention_plan(
++def batch_graph_attention_plan(
+     parents: list[tuple[int, ...]],
+     lengths: list[int],
+     group: int,
+diff --git a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_plan.py b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_plan.py
+index 67f28b9d8e..fc8d4d4783 100644
+--- a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_plan.py
++++ b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_plan.py
+@@ -124,14 +124,34 @@ class TreeBatchPlan:
+ def c8_attention_chunk_bucket(
+     lengths: Sequence[int], widths: Sequence[int], chunk_size: int
+ ) -> int | None:
+-    if len(lengths) != 8 or tuple(widths) != (16,) * 8 or min(lengths) < 2048:
++    if len(lengths) != 8 or tuple(widths) != (C1_GRAPH_ROWS,) * 8:
+         return None
+-    chunks = (max(lengths) + 16 + chunk_size - 1) // chunk_size
++    return batch_attention_chunk_bucket(lengths, widths, chunk_size)
++
++
++def batch_attention_chunk_bucket(
++    lengths: Sequence[int], widths: Sequence[int], chunk_size: int
++) -> int | None:
++    if (
++        len(lengths) != len(widths)
++        or not 2 <= len(lengths) <= 8
++        or min(lengths) < 2048
++        or any(not 1 <= width <= C1_GRAPH_ROWS for width in widths)
++    ):
++        return None
++    extent = max(length + width for length, width in zip(lengths, widths, strict=True))
++    chunks = (extent + chunk_size - 1) // chunk_size
+     if 5 <= chunks <= 8:
+         return (chunks + 1) // 2 * 2
+     return None
+ 
+ 
++def can_capture_batch_verification_graph(
++    shapes: Collection[tuple], requests: int
++) -> bool:
++    return 2 <= requests <= 8 and all(shape[0] != requests for shape in shapes)
++
++
+ def is_long_verification_graph(requests: int, rows: int, chunks: int) -> bool:
+     return requests == 8 and rows == 128 and 17 <= chunks <= 19
+ 
+diff --git a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_round.py b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_round.py
+index 828139f571..630a000147 100644
+--- a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_round.py
++++ b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_round.py
+@@ -32,7 +32,9 @@ from vllm.v1.worker.gpu.spec_decode.dflash2.tensorfold_plan import (
+     TreeBatchPlan,
+     TreeWindow,
+     VerifyCosts,
++    batch_attention_chunk_bucket,
+     c8_attention_chunk_bucket,
++    can_capture_batch_verification_graph,
+     can_capture_verification_graph,
+     is_long_verification_graph,
+ )
+@@ -64,6 +66,15 @@ def _verification_counter() -> Counter:
+     )
+ 
+ 
++@cache
++def _batch_bucket_counter() -> Counter:
++    return Counter(
++        "vllm:tensorfold_batch_graph_bucket_total",
++        "TensorFold verification steps using the additional multi-request buckets.",
++        ("batch_size", "route"),
++    )
++
++
+ @dataclass
+ class DraftRequest:
+     copy_index: "CopyIndex"
+@@ -213,11 +224,18 @@ class TensorFoldTreeDFlash2:
+             {} if spec.tree_dflash2_tensorfold_long_context_graph else None
+         )
+         self.c8_graph_buckets = spec.tree_dflash2_tensorfold_c8_graph_buckets
++        self.batch_graph_buckets = spec.tree_dflash2_tensorfold_batch_graph_buckets
++        self.batch_graphs: dict[tuple, VerificationGraph] = {}
+         self.verification_metrics = (
+             _verification_counter()
+             if getenv("TF_VERIFY_GRAPH_METRICS") == "1"
+             else None
+         )
++        self.batch_bucket_metrics = (
++            _batch_bucket_counter()
++            if self.batch_graph_buckets and self.verification_metrics is not None
++            else None
++        )
+         self.c1_graphs: dict[tuple, VerificationGraph] = {}
+         self.observed_shapes: OrderedDict[tuple, None] = OrderedDict()
+ 
+@@ -337,6 +355,8 @@ class TensorFoldTreeDFlash2:
+                 return verify, run(verify, ids, positions), "eager"
+             # Each chunk count gets the existing two-shape limit for one batch size.
+             graphs = self.long_context_graphs.setdefault(chunks, {})
++        elif verify.is_batch_graph_bucket:
++            graphs = self.batch_graphs
+         else:
+             graphs = self.c1_graphs if use_c1_bank else self.graphs
+         shape = (requests, ids.shape, positions.shape, verify.graph_key())
+@@ -353,6 +373,15 @@ class TensorFoldTreeDFlash2:
+                     chunks,
+                     verify.gdn_plan.slots,
+                 )
++            if verify.is_batch_graph_bucket:
++                logger.info_once(
++                    "TensorFold replayed a multi-request verifier bucket: "
++                    "%d requests, %d rows, %d chunks, %d GDN slots.",
++                    requests,
++                    ids.numel(),
++                    chunks,
++                    verify.gdn_plan.slots,
++                )
+             if chunks > 16:
+                 logger.info_once(
+                     "TensorFold long-context C8 verifier graph replay: %d chunks.",
+@@ -387,7 +416,12 @@ class TensorFoldTreeDFlash2:
+                 requests,
+             )
+             return captured.verify, captured.output, "replay"
+-        if not can_capture_verification_graph(graphs, requests, use_c1_bank):
++        can_capture = (
++            can_capture_batch_verification_graph(graphs, requests)
++            if verify.is_batch_graph_bucket
++            else can_capture_verification_graph(graphs, requests, use_c1_bank)
++        )
++        if not can_capture:
+             return verify, run(verify, ids, positions), "eager"
+         if shape not in self.observed_shapes:
+             self.observed_shapes[shape] = None
+@@ -436,6 +470,18 @@ class TensorFoldTreeDFlash2:
+             use_c1_bank and self.expand_c1_graph_bank and len(graphs) >= 2,
+         )
+         graph.replay()
++        if verify.is_batch_graph_bucket:
++            logger.info(
++                "TensorFold captured a multi-request verifier bucket: "
++                "%d requests, %d rows, %d chunks, %d GDN slots, "
++                "allocated=%d bytes, reserved=%d bytes.",
++                requests,
++                ids.numel(),
++                chunks,
++                verify.gdn_plan.slots,
++                torch.cuda.memory_allocated(self.device),
++                torch.cuda.memory_reserved(self.device),
++            )
+         if chunks > 16:
+             logger.info(
+                 "TensorFold captured long-context C8 verifier graph: "
+@@ -839,14 +885,19 @@ class TensorFoldTreeDFlash2:
+         )
+         extra_rows = C1_GRAPH_ROWS - batch.num_tokens if fixed_c1 else 0
+         model_windows = [windows[0].pad(C1_GRAPH_ROWS)] if extra_rows else windows
++        widths = [len(window.tokens) for window in model_windows]
+         c8_chunks = (
+-            c8_attention_chunk_bucket(
+-                lengths, [len(window.tokens) for window in model_windows], CHUNK
+-            )
++            c8_attention_chunk_bucket(lengths, widths, CHUNK)
+             if batch.num_reqs == 8
+             and (self.c8_graph_buckets or self.verification_metrics is not None)
+             else None
+         )
++        legacy_c8_chunks = c8_chunks if self.c8_graph_buckets else None
++        batch_chunks = (
++            batch_attention_chunk_bucket(lengths, widths, CHUNK)
++            if self.batch_graph_buckets and legacy_c8_chunks is None
++            else None
++        )
+         model_ids = batch.input_ids
+         if extra_rows:
+             model_ids = torch.nn.functional.pad(model_ids, (0, extra_rows))
+@@ -890,7 +941,8 @@ class TensorFoldTreeDFlash2:
+                 c1_fixed_width=fixed_c1,
+                 fused_conv=self.fused_conv,
+                 round_fp8_tail=self.c1_fp8_tree_tail and len(windows) == 1,
+-                c8_graph_chunks=c8_chunks if self.c8_graph_buckets else None,
++                c8_graph_chunks=legacy_c8_chunks,
++                batch_graph_chunks=batch_chunks,
+             )
+             root = to_device(plan.roots, torch.int64, self.device)
+             depths = to_device(plan.depths, positions.dtype, self.device)
+@@ -925,6 +977,8 @@ class TensorFoldTreeDFlash2:
+         self._record_verification(
+             batch, route, c8_chunks is not None, verify.is_c8_graph_bucket
+         )
++        if self.batch_bucket_metrics is not None and verify.is_batch_graph_bucket:
++            self.batch_bucket_metrics.labels(batch.num_reqs, route).inc()
+         batch_acceptance = (
+             verify.accept_and_commit_batch(windows, predicted)
+             if self.batch_device_commit and 2 <= batch.num_reqs <= 8
+diff --git a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_verify.py b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_verify.py
+index 7791477005..fa348da616 100644
+--- a/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_verify.py
++++ b/vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_verify.py
+@@ -17,8 +17,8 @@ from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
+ from vllm.v1.attention.backends.triton_attn import TritonAttentionMetadata
+ from vllm.v1.worker.gpu.spec_decode.dflash2.tensorfold_attention import (
+     C1_GRAPH_PREFIX_CAPACITY,
++    batch_graph_attention_plan,
+     c1_graph_attention_plan,
+-    c8_graph_attention_plan,
+     commit_paged_kv,
+     paged_attention,
+     partials,
+@@ -435,6 +435,7 @@ class TensorFoldVerify:
+         c1_fixed_width: bool = False,
+         round_fp8_tail: bool = False,
+         c8_graph_chunks: int | None = None,
++        batch_graph_chunks: int | None = None,
+     ):
+         self.device = device
+         self.plan = plan
+@@ -448,15 +449,21 @@ class TensorFoldVerify:
+             and 0 <= lengths[0] <= C1_GRAPH_PREFIX_CAPACITY
+         )
+         self.gdn_plan = gdn.plan(parents, device)
++        multi_request_chunks = c8_graph_chunks or batch_graph_chunks
++        if self.gdn_plan.slots > 4:
++            multi_request_chunks = None
+         self.is_c8_graph_bucket = (
+-            c8_graph_chunks is not None and self.gdn_plan.slots <= 4
++            c8_graph_chunks is not None and multi_request_chunks is not None
++        )
++        self.is_batch_graph_bucket = (
++            batch_graph_chunks is not None and multi_request_chunks is not None
+         )
+         if self.is_c1_graph_bucket:
+             slots = gdn_slot_bucket(self.gdn_plan.slots)
+             self.gdn_plan = replace(
+                 self.gdn_plan, slots=max(4, slots) if c1_fixed_width else slots
+             )
+-        elif self.is_c8_graph_bucket:
++        elif multi_request_chunks is not None:
+             self.gdn_plan = replace(
+                 self.gdn_plan, slots=gdn_slot_bucket(self.gdn_plan.slots)
+             )
+@@ -465,9 +472,8 @@ class TensorFoldVerify:
+             if self.is_c1_graph_bucket
+             else cdiv(max(lengths), attention.CHUNK) * attention.CHUNK
+         )
+-        if self.is_c8_graph_bucket:
+-            assert c8_graph_chunks is not None
+-            capacity = c8_graph_chunks * attention.CHUNK
++        if multi_request_chunks is not None:
++            capacity = multi_request_chunks * attention.CHUNK
+         self.stream_ids = gdn.to_device(plan.streams, torch.int32, device)
+         self.conv_windows: dict[int, torch.Tensor] = {}
+         pointers: list[int] = []
+@@ -515,10 +521,9 @@ class TensorFoldVerify:
+             self.attention_plan = c1_graph_attention_plan(
+                 parents[0], lengths[0], h // hk, device
+             )
+-        elif self.is_c8_graph_bucket:
+-            assert c8_graph_chunks is not None
+-            self.attention_plan = c8_graph_attention_plan(
+-                parents, lengths, h // hk, c8_graph_chunks, device
++        elif multi_request_chunks is not None:
++            self.attention_plan = batch_graph_attention_plan(
++                parents, lengths, h // hk, multi_request_chunks, device
+             )
+         else:
+             self.attention_plan = attention.plan(parents, lengths, h // hk, device)
+@@ -590,6 +595,7 @@ class TensorFoldVerify:
+         )
+         return (
+             self.is_c8_graph_bucket,
++            self.is_batch_graph_bucket,
+             self.gdn_plan.slots,
+             self.gdn_plan.max_rows,
+             self.attention_plan.chunks,

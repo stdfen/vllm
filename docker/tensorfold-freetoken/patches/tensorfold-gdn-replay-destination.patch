@@ -1,0 +1,76 @@
+--- a/tensorfold/cuda/kernels/gdn.cu
++++ b/tensorfold/cuda/kernels/gdn.cu
+@@ -212,7 +212,8 @@
+ template <typename QK, int R, int WARPS>
+ __global__ void __launch_bounds__(32 * WARPS) replay_kernel(
+         const long long* __restrict__ table, int layers, const int* __restrict__ rows, int row_stride,
+-        const int* __restrict__ counts, int count_stride, float* __restrict__ out, int hk, int hv, int dv) {
++        const int* __restrict__ counts, int count_stride, float* __restrict__ out, int hk, int hv, int dv,
++        int destination_offset) {
+     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+     const int head = blockIdx.y, stream = blockIdx.z / layers, layer = blockIdx.z % layers;
+     const int value0 = (blockIdx.x * WARPS + warp) * R;
+@@ -222,9 +223,11 @@
+     const auto* v = reinterpret_cast<const __nv_bfloat16*>(table[4 * layer + 1]);
+     const auto* g = reinterpret_cast<const float*>(table[4 * layer + 2]);
+     const auto* beta = reinterpret_cast<const float*>(table[4 * layer + 3]);
+-    const auto* s0 = reinterpret_cast<const float*>(table[4 * layers + stream * layers + layer]);
+-    // in place (no out): each thread stores exactly the elements it loaded, so blocks never overlap
+-    float* dst = out ? out + (static_cast<size_t>(stream) * layers + layer) * hv * dv * DK : const_cast<float*>(s0);
++    const int state_index = 4 * layers + stream * layers + layer;
++    const auto* s0 = reinterpret_cast<const float*>(table[state_index]);
++    // Destination tiles are disjoint, or identical to their source tile.
++    float* dst = out ? out + (static_cast<size_t>(stream) * layers + layer) * hv * dv * DK
++                     : reinterpret_cast<float*>(table[state_index + destination_offset]);
+     float s[R][4];
+ #pragma unroll
+     for (int r = 0; r < R; ++r) {
+@@ -325,11 +328,13 @@
+     const auto* t = reinterpret_cast<const long long*>(table.data_ptr<int64_t>());
+     const int rs = static_cast<int>(rows.stride(0)), cs = static_cast<int>(counts.stride(0));
+     float* dst = out.defined() ? out.data_ptr<float>() : nullptr;
++    const int destination_offset = table.numel() == 4 * layers + 2 * layers * streams
++        ? layers * streams : 0;
+     if (fp32_keys)
+         replay_kernel<float, R, WARPS><<<grid, 32 * WARPS, 0, stream>>>(
+-            t, layers, rows.data_ptr<int>(), rs, counts.data_ptr<int>(), cs, dst, hk, hv, dv);
++            t, layers, rows.data_ptr<int>(), rs, counts.data_ptr<int>(), cs, dst, hk, hv, dv, destination_offset);
+     else
+         replay_kernel<__nv_bfloat16, R, WARPS><<<grid, 32 * WARPS, 0, stream>>>(
+-            t, layers, rows.data_ptr<int>(), rs, counts.data_ptr<int>(), cs, dst, hk, hv, dv);
++            t, layers, rows.data_ptr<int>(), rs, counts.data_ptr<int>(), cs, dst, hk, hv, dv, destination_offset);
+     C10_CUDA_KERNEL_LAUNCH_CHECK();
+ }
+--- a/tensorfold/cuda/kernels/gdn.cpp
++++ b/tensorfold/cuda/kernels/gdn.cpp
+@@ -89,7 +89,9 @@
+ at::Tensor replay(const at::Tensor& table, int64_t layers, int64_t streams, const at::Tensor& rows,
+                   const at::Tensor& counts, int64_t hk, int64_t hv, int64_t dv, bool fp32_keys, bool in_place) {
+     TORCH_CHECK(table.is_cuda() && table.is_contiguous() && table.scalar_type() == at::kLong &&
+-                table.numel() == 4 * layers + layers * streams, "table: 4 * layers + layers * streams pointers");
++                (table.numel() == 4 * layers + layers * streams ||
++                   (in_place && table.numel() == 4 * layers + 2 * layers * streams)),
++                  "table: layer inputs, source states and optional destination states");
+     TORCH_CHECK(rows.is_cuda() && rows.scalar_type() == at::kInt && rows.dim() == 2 && rows.size(0) == streams &&
+                 rows.stride(1) == 1, "rows: (streams, P) int32, each stream's rows contiguous");
+     TORCH_CHECK(counts.is_cuda() && counts.scalar_type() == at::kInt && counts.dim() == 1 &&
+--- a/tensorfold/cuda/kernels/gdn.py
++++ b/tensorfold/cuda/kernels/gdn.py
+@@ -15,7 +15,7 @@
+     from tensorfold.cuda.build import load
+ 
+     here = Path(__file__).parent
+-    return load(name="tensorfold_gdn_v2", sources=[str(here / "gdn.cpp"), str(here / "gdn.cu"),
++    return load(name="tensorfold_gdn_v2_dst", sources=[str(here / "gdn.cpp"), str(here / "gdn.cu"),
+                                                    str(here / "gdn_prefill.cu")],
+                 extra_cuda_cflags=["-O3", "--fmad=false"], verbose=False)
+ 
+@@ -150,6 +150,8 @@
+     return table
+ 
+ 
++SUPPORTS_REPLAY_DESTINATIONS = True
++
+ def replay(table: torch.Tensor, layers: int, streams: int, rows: torch.Tensor, counts: torch.Tensor,
+            k0: torch.Tensor, v0: torch.Tensor, *, in_place: bool = False) -> torch.Tensor | None:
+     """States after the accepted rows; ``in_place`` overwrites the table's states, which nothing else may hold."""

@@ -1,0 +1,23 @@
+{
+  "method": "dflash",
+  "model": "/drafter",
+  "num_speculative_tokens": 15,
+  "enable_tree_dflash2": true,
+  "tree_dflash2_mode": "tensorfold",
+  "tree_dflash2_tensorfold_cuda_graph": true,
+  "tree_dflash2_tensorfold_native_target": true,
+  "tree_dflash2_tensorfold_c1_graph_bucket": true,
+  "tree_dflash2_tensorfold_c1_draft_graph": true,
+  "tree_dflash2_tensorfold_c1_commit_graph": true,
+  "tree_dflash2_tensorfold_c1_device_accept": true,
+  "tree_dflash2_tensorfold_c1_recurrent_commit_coverage": true,
+  "tree_dflash2_tensorfold_c1_async_draft_upload": true,
+  "tree_dflash2_tensorfold_c1_resident_direct_stage": true,
+  "tree_dflash2_tensorfold_c1_qmm_split": true,
+  "tree_dflash2_tensorfold_c1_fp8_tree_tail": true,
+  "tree_dflash2_tensorfold_batch_device_commit": true,
+  "tree_dflash2_tensorfold_long_context_graph": true,
+  "tree_dflash2_tensorfold_c8_graph_buckets": true,
+  "tree_dflash2_tensorfold_compile_prefill": true,
+  "tree_dflash2_tensorfold_batch_graph_buckets": true
+}

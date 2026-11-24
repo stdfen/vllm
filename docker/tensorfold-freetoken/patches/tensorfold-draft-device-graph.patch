@@ -1,0 +1,97 @@
+--- a/tensorfold/families/qwen3_5/cuda/draft_attention.py
++++ b/tensorfold/families/qwen3_5/cuda/draft_attention.py
+@@ -85,6 +85,15 @@
+                         [kc.shape[1] for kc in keys], dtype=torch.int64).pin_memory()
+     dev = host.to(q.device, non_blocking=True)
+     table, lens = dev[:2 * streams], dev[2 * streams:].to(torch.int32)
++    return block_attention_with_layout(q, k, v, table, lens, length, window, scale, causal)
++
++
++def block_attention_with_layout(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
++                                table: torch.Tensor, lens: torch.Tensor, length: int,
++                                window: int, scale: float, causal: bool) -> torch.Tensor:
++    """Launch the same attention with caller-owned device metadata."""
++    heads, rows, dim = q.shape
++    streams, kv_heads = rows // length, k.shape[0]
+     out = torch.empty((rows, heads * dim), dtype=torch.bfloat16, device=q.device)
+     group = heads // kv_heads
+     _block_attention[(streams, kv_heads)](q, k, v, table, lens, out, scale, window, rows, G=group, HKV=kv_heads,
+--- a/tensorfold/families/qwen3_5/cuda/dflash2.py
++++ b/tensorfold/families/qwen3_5/cuda/dflash2.py
+@@ -18,7 +18,7 @@
+ from .affine_memory import packed_draft
+ from .draft_tree import best_first
+ from .glue import embedding, swiglu
+-from .draft_attention import append, block_attention
++from .draft_attention import append, block_attention, block_attention_with_layout
+ from .qmm import group_sums
+ from .qmm_fast import matmul, matmul_rows, rows, tile, untile
+ from .weights import Exl3, Plain, QLinear, Weights
+@@ -445,7 +445,7 @@
+         return q, k, v
+ 
+     def _layer_fast(self, i: int, x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, ctx: list,
+-                    length: int) -> torch.Tensor:
++                    length: int, context_layout: tuple[torch.Tensor, torch.Tensor] | None = None) -> torch.Tensor:
+         """One layer over several streams' blocks (``length`` rows each); each block attends its own context."""
+ 
+         w = self.weights
+@@ -455,8 +455,14 @@
+         conv = w[base + "attention_conv.base_kernel"]
+         q, k, v = self._prep(self._lin(_dconv(normed, dyn, conv, 0, self.group_size, seg=length),
+                                        base + "self_attn.qkv.weight"), i, cos, sin, self.heads_local)
+-        out = block_attention(q, k, v, [snap[0][i] for snap in ctx], [snap[1][i] for snap in ctx], length,
+-                              self.window, self.head_dim ** -0.5, self.is_causal)
++        if context_layout is None:
++            out = block_attention(q, k, v, [snap[0][i] for snap in ctx], [snap[1][i] for snap in ctx], length,
++                                  self.window, self.head_dim ** -0.5, self.is_causal)
++        else:
++            table, lengths = context_layout
++            out = block_attention_with_layout(
++                q, k, v, table, lengths, length, self.window, self.head_dim ** -0.5, self.is_causal
++            )
+         x = _dconv(self._row(out, base + "self_attn.o_proj.weight"), dyn, conv, 1, self.group_size, x, seg=length)
+         normed = F.rms_norm(x, (self.hidden,), w[base + "post_attention_layernorm.weight"], self.eps)
+         dyn = self._lin(normed, base + "mlp_conv.kernel_projection.weight")
+@@ -517,6 +523,13 @@
+                     y = self._layer(layer, y)
+                 hs.append(_norm(y[1:], self.weights["norm.weight"], self.eps))
+             h = torch.cat(hs)
++        global_ids, packed = self._candidate_buffers(h)
++        shared = [global_ids, packed, None]     # read back once, by the first finish
++        for j, i in enumerate(live):
++            out[i] = (shared, j * (length - 1), length - 1, int(pendings[i]))
++        return out
++
++    def _candidate_buffers(self, h: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+         projected = self._lin(h, "candidate_selector.hidden_projection.weight").float()
+         if self.sub_parts is not None:
+             h = h.contiguous()
+@@ -539,10 +552,23 @@
+             merged = torch.cat((both_values[0], both_values[1]), dim=1)
+             values, pick = torch.topk(merged, k=16, dim=-1, sorted=False)
+             global_ids = torch.cat((both_ids[0], both_ids[1]), dim=1).gather(1, pick)
+-        shared = [global_ids, torch.cat((values, projected), dim=1), None]     # read back once, by the first finish
+-        for j, i in enumerate(live):
+-            out[i] = (shared, j * (length - 1), length - 1, int(pendings[i]))
+-        return out
++        return global_ids, torch.cat((values, projected), dim=1)
++
++    @torch.no_grad()
++    def launch_c1_device(self, tokens: torch.Tensor, positions: torch.Tensor, tables: torch.Tensor,
++                         lengths: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
++        """Launch one native draft block using resident, caller-owned inputs."""
++        if not self.fast or self.world != 1:
++            raise ValueError("Device draft launch requires fast single-rank DFlash2")
++        length = tokens.numel()
++        phase = positions[:, None] * self.inv_freq[None, :]
++        cos, sin = phase.cos().contiguous(), phase.sin().contiguous()
++        x = embedding(tokens, self.target_embed)
++        for layer in range(self.layers):
++            x = self._layer_fast(layer, x, cos, sin, [], length, (tables[layer], lengths[layer]))
++        h = F.rms_norm(x.view(1, length, -1)[:, 1:].reshape(-1, self.hidden), (self.hidden,),
++                       self.weights["norm.weight"], self.eps)
++        return self._candidate_buffers(h)
+ 
+     def finish_tree(self, launched, context_length: int, max_nodes: int,
+                     sampling: Sampling | None = None) -> tuple[list[int], list[int], list[float]]:

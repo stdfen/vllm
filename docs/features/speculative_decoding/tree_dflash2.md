@@ -1,5 +1,10 @@
 # Tree-DFlash2 verification
 
+For the GB10 integration on vLLM 0.33.0, see the [integration record](tensorfold_freetoken/integration.md),
+[TensorFold 0.6.0 benchmark](tensorfold_freetoken/performance_tensorfold.md),
+[stock vLLM 0.33.0 benchmark](tensorfold_freetoken/performance_vllm.md),
+and [patch and image guide](tensorfold_freetoken/patch_and_image.md).
+
 Tree-DFlash2 is an opt-in verifier in V2 Model Runner for Qwen3.5/3.8
 dense text targets on one CUDA GPU. It reuses a `DFlash2DraftModel` and the
 predictor's conditional candidate scores.
