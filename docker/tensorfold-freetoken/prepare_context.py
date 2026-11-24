@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Assemble the tracked vLLM delta and pinned FreeToken source for Docker."""
+"""Assemble the vLLM source delta, FreeToken patch and locked build inputs."""
 
 import argparse
 import hashlib
@@ -14,6 +14,7 @@ from urllib.request import urlopen
 
 VLLM_BASE = "4ba787ec9959e566d3b587a796dff07673324da5"
 FREETOKEN_REV = "af71ba43206e124f5ff6419b47ee36c6e9981078"
+FREETOKEN_PATCH = "vllm-0.33.0-qwen36-freetoken.patch"
 FLASHLIB_WHEEL = "flashlib-0.3.0-py3-none-any.whl"
 FLASHLIB_SHA256 = "9037911f315fef3c9f4453261597363abcb83868813ad1b258ab1308b34fd11a"
 FLASHLIB_URL = (
@@ -58,19 +59,35 @@ def main() -> None:
     if args.tensorfold_wheel and TENSORFOLD_ENTRY not in paths:
         raise ValueError("The combined image requires the vLLM TensorFold source delta")
 
+    patch = recipe / "patches" / FREETOKEN_PATCH
+    patch_stats = git(repo, "apply", "--numstat", "-z", str(patch)).decode()
+    patch_paths = [
+        entry.split("\t", 2)[2] for entry in patch_stats.rstrip("\0").split("\0")
+    ]
+    if not set(patch_paths).issubset(paths):
+        raise ValueError(
+            "Apply the FreeToken source patch before preparing the context"
+        )
+
     output = args.output.resolve()
     output.mkdir(parents=True)
+    shutil.copyfile(patch, output / FREETOKEN_PATCH)
     manifest = {
         "vllm_base": VLLM_BASE,
         "vllm_head": git(repo, "rev-parse", "HEAD").decode().strip(),
         "freetoken_revision": FREETOKEN_REV,
+        "freetoken_patch_sha256": hashlib.sha256(patch.read_bytes()).hexdigest(),
+        "freetoken_patch_paths": patch_paths,
         "overlay": {},
     }
     for path in paths:
         dest = output / path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(repo / path, dest)
-        manifest["overlay"][path] = hashlib.sha256(dest.read_bytes()).hexdigest()
+        source = (repo / path).read_bytes()
+        if path in patch_paths:
+            source = source.replace(b"\r\n", b"\n")
+        dest.write_bytes(source)
+        manifest["overlay"][path] = hashlib.sha256(source).hexdigest()
 
     archive = git(
         args.freetoken,

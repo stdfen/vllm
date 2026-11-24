@@ -1,1 +1,2 @@
 *.patch -text -whitespace
+vllm-0.33.0-qwen36-freetoken.patch text eol=lf whitespace=-blank-at-eol

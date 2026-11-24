@@ -7,6 +7,7 @@ import importlib.metadata
 import importlib.util
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -19,12 +20,26 @@ def install_overlay() -> None:
     manifest = json.loads(
         Path("/usr/share/qwen36-freetoken/source-manifest.json").read_text()
     )
+    patch = root / "vllm-0.33.0-qwen36-freetoken.patch"
+    assert (
+        hashlib.sha256(patch.read_bytes()).hexdigest()
+        == manifest["freetoken_patch_sha256"]
+    )
+    patch_paths = set(manifest["freetoken_patch_paths"])
     for path, digest in manifest["overlay"].items():
         source = root / path
         assert hashlib.sha256(source.read_bytes()).hexdigest() == digest, path
-        dest = packages / path
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, dest)
+        if path not in patch_paths:
+            dest = packages / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, dest)
+    patch_args = ["patch", "--batch", "--forward", "--fuzz=0", "-p1", "-i", str(patch)]
+    subprocess.run([*patch_args, "--dry-run"], cwd=packages, check=True)
+    subprocess.run(patch_args, cwd=packages, check=True)
+    for path in patch_paths:
+        installed = (packages / path).read_bytes()
+        assert hashlib.sha256(installed).hexdigest() == manifest["overlay"][path], path
+    print("FreeToken patch applied and matched the vLLM source manifest")
     shutil.copytree(root / "freetoken", packages / "freetoken")
 
 

@@ -48,7 +48,10 @@ uv build --wheel
 
 ## 基于 vLLM 0.33.0 构建镜像
 
-在 Linux ARM64、Docker BuildKit 环境执行。构建上下文是锁定发布包解出的
+同一个 Dockerfile 提供 `tensorfold-gb10` 和 `combined` 两个构建目标。以下
+命令用于 GB10 TensorFold 镜像。 [amd64 TensorFold + FreeToken 构建指南](../../qwen36_freetoken/patch_and_image.md)
+
+在 Linux ARM64、Docker BuildKit 环境执行 `tensorfold-gb10`。构建上下文是锁定发布包解出的
 `release/`。工作区内的原包为
 `artifacts/20261124-vllm-tensorfold-batch-graph-buckets-aba/release.tar.gz`。
 发布包含完整 overlay、逐文件 SHA256、TensorFold wheel 及 CUDA 检查脚本。
@@ -68,7 +71,7 @@ tar -xzf "$bundle" -C "$context"
 base=vllm/vllm-openai:v0.33.0
 test "$(docker image inspect --format '{{.Id}}' "$base")" = \
     'sha256:a0dfdeea1d42d4201c82d9bb44f2f4bb1ac2ef5aea196e9e0d1007a2834d2f70'
-DOCKER_BUILDKIT=1 docker build --platform linux/arm64 --pull=false --network=none \
+DOCKER_BUILDKIT=1 docker build --target tensorfold-gb10 --platform linux/arm64 --pull=false --network=none \
     -f "$repo/docker/tensorfold-freetoken/Dockerfile" \
     -t vllm-tensorfold-freetoken:0.33.0-gb10 "$context/release"
 docker image inspect --format '{{.Id}}' vllm-tensorfold-freetoken:0.33.0-gb10
