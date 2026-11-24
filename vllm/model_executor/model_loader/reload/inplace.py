@@ -52,6 +52,9 @@ def reload_weights(
             processed into kernel format (repacking, renaming, etc.)
 
     """
+    if any(getattr(p, "_vllm_retain_uva_cpu_data", False) for p in model.parameters()):
+        raise NotImplementedError("In-place reload with FreeToken requires a restart")
+
     # TODO(@kylesayrs): generalize to all runners and loaders
     # argument validation
     if weights_iterator is None and not is_checkpoint_format:

@@ -25,7 +25,7 @@
 """Inference-only Qwen3.5 Series compatible with HuggingFace weights."""
 
 from collections.abc import Iterable
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import torch
 from torch import nn
@@ -36,6 +36,7 @@ from transformers import (
     Qwen3_5TextConfig,
 )
 
+import vllm.envs as envs
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import VllmConfig
 from vllm.distributed import (
@@ -105,6 +106,11 @@ from .utils import (
     maybe_prefix,
 )
 
+if TYPE_CHECKING:
+    from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
+        Qwen36FreeTokenRuntime,
+    )
+
 logger = init_logger(__name__)
 
 
@@ -128,6 +134,7 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
         vllm_config: VllmConfig,
         layer_type: str,
         prefix: str = "",
+        freetoken: "Qwen36FreeTokenRuntime | None" = None,
     ) -> None:
         super(Qwen3NextDecoderLayer, self).__init__()
 
@@ -173,6 +180,7 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
             self.mlp = Qwen3NextSparseMoeBlock(
                 vllm_config=vllm_config,
                 prefix=f"{prefix}.mlp",
+                freetoken=freetoken,
             )
         elif config.model_type == "qwen3_5_text":
             self.mlp = Qwen3NextMLP(
@@ -253,11 +261,20 @@ class Qwen3_5Model(Qwen3NextModel):
             config.hidden_size,
         )
 
+        freetoken = None
+        if envs.VLLM_QWEN36_FREETOKEN and config.model_type == "qwen3_5_moe_text":
+            from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
+                Qwen36FreeTokenRuntime,
+            )
+
+            freetoken = Qwen36FreeTokenRuntime(vllm_config)
+
         def get_layer(prefix: str):
             return Qwen3_5DecoderLayer(
                 vllm_config,
                 layer_type=config.layer_types[extract_layer_index(prefix)],
                 prefix=prefix,
+                freetoken=freetoken,
             )
 
         self.start_layer, self.end_layer, self.layers = make_layers(

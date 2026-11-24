@@ -1,5 +1,7 @@
 # Features
 
+- [FreeToken expert offload for Qwen3.6-35B-A3B](qwen36_freetoken.md)
+
 ## Compatibility Matrix
 
 The tables below show mutually exclusive features and the support on some hardware.

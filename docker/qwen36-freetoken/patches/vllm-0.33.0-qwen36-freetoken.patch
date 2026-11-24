@@ -1,0 +1,861 @@
+diff --git a/docker/qwen36-freetoken/Dockerfile b/docker/qwen36-freetoken/Dockerfile
+new file mode 100644
+index 0000000000000000000000000000000000000000..8f2f0fd057edf7ed1d6e35085c529b066cce29fa
+--- /dev/null
++++ b/docker/qwen36-freetoken/Dockerfile
+@@ -0,0 +1,54 @@
++ARG BASE_IMAGE=vllm/vllm-openai@sha256:91ee972ab751fb7180bc71c175865e36b091686600dca783d52b2511399810b3
++FROM ${BASE_IMAGE} AS build
++
++ENV MAX_JOBS=4 TORCH_CUDA_ARCH_LIST=8.9 TVM_FFI_CUDA_ARCH_LIST=8.9
++WORKDIR /tmp/freetoken
++COPY freetoken/ .
++RUN test -n "$(command -v nvcc)" && \
++    test -n "$(command -v ninja)" && \
++    test "$(grep -c -- '-std=c++17' setup.py)" -eq 3 && \
++    sed -i 's/-std=c++17/-std=c++20/g' setup.py && \
++    python3 setup.py build_ext --inplace
++
++FROM ${BASE_IMAGE} AS freetoken
++ENV MAX_JOBS=4 TVM_FFI_CUDA_ARCH_LIST=8.9
++COPY --from=build /tmp/freetoken/python/freetoken /tmp/qwen36-runtime/freetoken
++COPY --from=build /tmp/freetoken/LICENSE /usr/share/licenses/freetoken/LICENSE
++COPY vllm/ /tmp/qwen36-runtime/vllm
++COPY source-manifest.json /usr/share/qwen36-freetoken/source-manifest.json
++COPY verify_runtime.py verify_decode_routes.py /tmp/qwen36-runtime/
++COPY flashlib-0.3.0-py3-none-any.whl /tmp/qwen36-runtime/
++RUN cd /tmp/qwen36-runtime && \
++    printf '%s\n' '9037911f315fef3c9f4453261597363abcb83868813ad1b258ab1308b34fd11a  flashlib-0.3.0-py3-none-any.whl' | sha256sum -c - && \
++    uv --no-config pip install --system --no-cache --no-index --no-deps ./flashlib-0.3.0-py3-none-any.whl && \
++    mkdir /tmp/qwen36-runtime/build-driver && \
++    ln -s "${CUDA_HOME}/targets/x86_64-linux/lib/stubs/libcuda.so" /tmp/qwen36-runtime/build-driver/libcuda.so.1 && \
++    LD_LIBRARY_PATH="/tmp/qwen36-runtime/build-driver:${LD_LIBRARY_PATH}" \
++        python3 -P /tmp/qwen36-runtime/verify_runtime.py && \
++    TRITON_INTERPRET=1 python3 -P verify_decode_routes.py interpret \
++        vllm/model_executor/layers/fused_moe/qwen36_freetoken.py && \
++    TRITON_INTERPRET=0 TRITON_CACHE_DIR=/tmp/qwen36-runtime/triton \
++        python3 -P verify_decode_routes.py compile \
++        vllm/model_executor/layers/fused_moe/qwen36_freetoken.py && \
++    cd / && \
++    rm -rf /tmp/qwen36-runtime
++
++FROM freetoken AS combined
++COPY tensorfold-0.6.0-py3-none-any.whl verify_runtime.py /tmp/qwen36-tensorfold/
++RUN set -eu; \
++    cd /tmp/qwen36-tensorfold; \
++    printf '%s\n' '68f8c24002d3efbb1345462e7b7a3df2a462a2d0e06f5ca54ad0ff330ca3cbef  tensorfold-0.6.0-py3-none-any.whl' | sha256sum -c -; \
++    uv --no-config pip install --system --no-cache --no-index --no-deps ./tensorfold-0.6.0-py3-none-any.whl; \
++    vendor_headers=/usr/local/lib/python3.12/dist-packages/nvidia/cu13/include; \
++    mkdir /opt/tensorfold-cuda-headers build-driver; \
++    for header in "$vendor_headers"/cusparse*.h "$vendor_headers"/cusolver*.h "$vendor_headers"/cublas*.h; do \
++        if [ -f "$header" ]; then ln -s "$header" "/opt/tensorfold-cuda-headers/${header##*/}"; fi; \
++    done; \
++    test -f /opt/tensorfold-cuda-headers/cusparse.h; \
++    ln -s "${CUDA_HOME}/targets/x86_64-linux/lib/stubs/libcuda.so" build-driver/libcuda.so.1; \
++    LD_LIBRARY_PATH="$PWD/build-driver:${LD_LIBRARY_PATH}" python3 -P verify_runtime.py --tensorfold; \
++    cd /; \
++    rm -rf /tmp/qwen36-tensorfold
++
++ENV CPATH=/opt/tensorfold-cuda-headers \
++    NVCC_PREPEND_FLAGS=-I/opt/tensorfold-cuda-headers
+diff --git a/docker/qwen36-freetoken/prepare_context.py b/docker/qwen36-freetoken/prepare_context.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..0af22c6c07caf8e3704fb4e50b5467da16f117c8
+--- /dev/null
++++ b/docker/qwen36-freetoken/prepare_context.py
+@@ -0,0 +1,114 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Assemble the tracked vLLM delta and pinned FreeToken source for Docker."""
++
++import argparse
++import hashlib
++import io
++import json
++import shutil
++import subprocess
++import tarfile
++from pathlib import Path
++from urllib.request import urlopen
++
++VLLM_BASE = "4ba787ec9959e566d3b587a796dff07673324da5"
++FREETOKEN_REV = "af71ba43206e124f5ff6419b47ee36c6e9981078"
++FLASHLIB_WHEEL = "flashlib-0.3.0-py3-none-any.whl"
++FLASHLIB_SHA256 = "9037911f315fef3c9f4453261597363abcb83868813ad1b258ab1308b34fd11a"
++FLASHLIB_URL = (
++    "https://files.pythonhosted.org/packages/e5/b8/"
++    f"4c085892462e521bb9f2d943ff34fa219e3a5a206798f3c96a983538039f/{FLASHLIB_WHEEL}"
++)
++TENSORFOLD_WHEEL = "tensorfold-0.6.0-py3-none-any.whl"
++TENSORFOLD_SHA256 = "68f8c24002d3efbb1345462e7b7a3df2a462a2d0e06f5ca54ad0ff330ca3cbef"
++TENSORFOLD_ENTRY = "vllm/v1/worker/gpu/spec_decode/dflash2/tensorfold_round.py"
++
++
++def git(repo: Path, *args: str) -> bytes:
++    return subprocess.check_output(["git", "-C", str(repo), *args])
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("freetoken", type=Path, help="FreeToken Git checkout")
++    parser.add_argument("output", type=Path, help="New build context directory")
++    parser.add_argument(
++        "--flashlib-wheel", type=Path, help="Use a locally cached wheel"
++    )
++    parser.add_argument(
++        "--tensorfold-wheel", type=Path, help="Pinned wheel for the combined image"
++    )
++    args = parser.parse_args()
++
++    recipe = Path(__file__).resolve().parent
++    repo = recipe.parents[1]
++    git(repo, "merge-base", "--is-ancestor", VLLM_BASE, "HEAD")
++    changes = git(repo, "diff", "--name-only", "-z", VLLM_BASE, "--", "vllm")
++    new_files = git(
++        repo, "ls-files", "--others", "--exclude-standard", "-z", "--", "vllm"
++    )
++    paths = sorted(set((changes + new_files).decode().strip("\0").split("\0")))
++    if not paths or any(
++        not p.endswith(".py") or not (repo / p).is_file() for p in paths
++    ):
++        raise ValueError(
++            "The release image overlay requires a Python-only source delta"
++        )
++    if args.tensorfold_wheel and TENSORFOLD_ENTRY not in paths:
++        raise ValueError("The combined image requires the vLLM TensorFold source delta")
++
++    output = args.output.resolve()
++    output.mkdir(parents=True)
++    manifest = {
++        "vllm_base": VLLM_BASE,
++        "vllm_head": git(repo, "rev-parse", "HEAD").decode().strip(),
++        "freetoken_revision": FREETOKEN_REV,
++        "overlay": {},
++    }
++    for path in paths:
++        dest = output / path
++        dest.parent.mkdir(parents=True, exist_ok=True)
++        shutil.copyfile(repo / path, dest)
++        manifest["overlay"][path] = hashlib.sha256(dest.read_bytes()).hexdigest()
++
++    archive = git(
++        args.freetoken,
++        "archive",
++        FREETOKEN_REV,
++        "python/freetoken",
++        "setup.py",
++        "pyproject.toml",
++        "README.md",
++        "LICENSE",
++    )
++    manifest["freetoken_source_sha256"] = hashlib.sha256(archive).hexdigest()
++    with tarfile.open(fileobj=io.BytesIO(archive)) as source:
++        source.extractall(output / "freetoken", filter="data")
++
++    if args.flashlib_wheel:
++        wheel = args.flashlib_wheel.read_bytes()
++    else:
++        with urlopen(FLASHLIB_URL, timeout=30) as response:
++            wheel = response.read()
++    if hashlib.sha256(wheel).hexdigest() != FLASHLIB_SHA256:
++        raise ValueError("Flashlib wheel SHA-256 mismatch")
++    (output / FLASHLIB_WHEEL).write_bytes(wheel)
++    manifest["flashlib_wheel_sha256"] = FLASHLIB_SHA256
++
++    if args.tensorfold_wheel:
++        wheel = args.tensorfold_wheel.read_bytes()
++        if hashlib.sha256(wheel).hexdigest() != TENSORFOLD_SHA256:
++            raise ValueError("TensorFold wheel SHA-256 mismatch")
++        (output / TENSORFOLD_WHEEL).write_bytes(wheel)
++        manifest["tensorfold_wheel_sha256"] = TENSORFOLD_SHA256
++
++    (output / "source-manifest.json").write_text(
++        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
++    )
++    for filename in ("Dockerfile", "verify_runtime.py", "verify_decode_routes.py"):
++        shutil.copyfile(recipe / filename, output / filename)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/docker/qwen36-freetoken/verify_decode_routes.py b/docker/qwen36-freetoken/verify_decode_routes.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..03946507bfb3590095820f9097d3c7da8ab678b0
+--- /dev/null
++++ b/docker/qwen36-freetoken/verify_decode_routes.py
+@@ -0,0 +1,90 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Interpret and compile the route sanitizer without allocating a GPU."""
++
++import argparse
++import ast
++import importlib.util
++from pathlib import Path
++from tempfile import TemporaryDirectory
++
++import torch
++
++
++def load_sanitizer(source, directory):
++    tree = ast.parse(source.read_text(encoding="utf-8"))
++    kernel = next(
++        node
++        for node in tree.body
++        if getattr(node, "name", None) == "_prepare_decode_routes"
++    )
++    module_path = directory / "route_sanitizer.py"
++    module_path.write_text(
++        "import triton\nfrom triton import language as tl\n"
++        + ast.unparse(kernel)
++        + "\n"
++    )
++    spec = importlib.util.spec_from_file_location("route_sanitizer", module_path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module._prepare_decode_routes
++
++
++def interpret(kernel):
++    inputs = (
++        ([0, 3, 17, 40, 60, 70, 111, 255], [0, 3, 17, 40, 60, 70, 111, 255]),
++        ([-1, 17, 255, -1, 128, 256, 9, -1], [9, 17, 255, 9, 128, 9, 9, 9]),
++        ([-1] * 8, [0] * 8),
++    )
++    for input_ids, expected_ids in inputs:
++        ids = torch.tensor([input_ids], dtype=torch.int32)
++        valid = (ids >= 0) & (ids < 256)
++        weights = torch.arange(1, 9, dtype=torch.float32).view(1, 8) / 16
++        weights[~valid] = torch.nan
++        safe_ids = torch.empty_like(ids)
++        safe_weights = torch.empty_like(weights)
++        no_valid_route = torch.empty(1, dtype=torch.bool)
++        kernel[(1,)](ids, weights, safe_ids, safe_weights, no_valid_route, 8, 256)
++        torch.testing.assert_close(
++            safe_ids, torch.tensor([expected_ids], dtype=torch.int32)
++        )
++        torch.testing.assert_close(safe_weights, weights.masked_fill(~valid, 0))
++        assert no_valid_route.item() == (not valid.any().item())
++        assert ids.tolist() == [input_ids]
++        print(f"Route sanitizer interpreter passed {input_ids}")
++
++
++def compile_sm89(kernel):
++    from triton.backends.compiler import GPUTarget
++    from triton.compiler import ASTSource, compile
++
++    signature = {
++        "ids_ptr": "*i32",
++        "weights_ptr": "*fp32",
++        "safe_ids_ptr": "*i32",
++        "safe_weights_ptr": "*fp32",
++        "no_valid_route_ptr": "*i1",
++        "top_k": "constexpr",
++        "num_experts": "constexpr",
++    }
++    source = ASTSource(kernel, signature, constexprs={"top_k": 8, "num_experts": 256})
++    result = compile(source, target=GPUTarget("cuda", 89, 32))
++    assert result.asm["cubin"]
++    print("Route sanitizer compiled for SM89")
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("mode", choices=("interpret", "compile"))
++    parser.add_argument("source", type=Path)
++    args = parser.parse_args()
++    with TemporaryDirectory() as directory:
++        kernel = load_sanitizer(args.source, Path(directory))
++        if args.mode == "interpret":
++            interpret(kernel)
++        else:
++            compile_sm89(kernel)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/docker/qwen36-freetoken/verify_runtime.py b/docker/qwen36-freetoken/verify_runtime.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..3274f00aec01b479a5f1694f5394163b6c4ae29e
+--- /dev/null
++++ b/docker/qwen36-freetoken/verify_runtime.py
+@@ -0,0 +1,87 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Install the audited source overlay and verify the CPU-side image ABI."""
++
++import hashlib
++import importlib.metadata
++import importlib.util
++import json
++import shutil
++import sys
++from pathlib import Path
++
++
++def install_overlay() -> None:
++    root = Path(__file__).resolve().parent
++    spec = importlib.util.find_spec("vllm")
++    assert spec and spec.origin
++    packages = Path(spec.origin).parent.parent
++    manifest = json.loads(
++        Path("/usr/share/qwen36-freetoken/source-manifest.json").read_text()
++    )
++    for path, digest in manifest["overlay"].items():
++        source = root / path
++        assert hashlib.sha256(source.read_bytes()).hexdigest() == digest, path
++        dest = packages / path
++        dest.parent.mkdir(parents=True, exist_ok=True)
++        shutil.copyfile(source, dest)
++    shutil.copytree(root / "freetoken", packages / "freetoken")
++
++
++def main() -> None:
++    install_overlay()
++
++    import torch
++    import vllm._C_stable_libtorch  # noqa: F401
++    import vllm._moe_C_stable_libtorch  # noqa: F401
++    from freetoken.kernel import _pinned_tensor  # noqa: F401
++    from freetoken.kernel.batch_memcpy import _jit_batch_memcpy_module
++    from freetoken.kernel.fast_index_copy import _jit_fast_index_copy_multi_module
++    from freetoken.layers.moe import OffloadMoELayer  # noqa: F401
++    from freetoken.moe.offload_cache import OffloadMoeCache  # noqa: F401
++    from tvm_ffi.cpp import load_inline
++
++    from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
++        Qwen36FreeTokenRuntime,  # noqa: F401
++    )
++
++    assert importlib.metadata.version("vllm").split("+")[0] == "0.33.0"
++    assert torch.__version__.split("+")[0] == "2.14.0"
++    assert torch.version.cuda and torch.version.cuda.startswith("13.0")
++    assert importlib.metadata.version("apache-tvm-ffi") == "0.1.11"
++    module = load_inline(
++        "qwen36_freetoken_ffi_smoke",
++        cpp_sources=[
++            "#include <tvm/ffi/function.h>",
++            "int answer() { return 42; }",
++            "TVM_FFI_DLL_EXPORT_TYPED_FUNC(answer, answer);",
++        ],
++    )
++    assert module.answer() == 42
++    assert callable(_jit_batch_memcpy_module().batch_memcpy)
++    assert callable(
++        _jit_fast_index_copy_multi_module(num_threads=1024, blocks_per_bank=8).launch
++    )
++    for package in ("vllm", "torch", "triton", "apache-tvm-ffi", "flashlib"):
++        print(f"{package}=={importlib.metadata.version(package)}")
++    print("FreeToken runtime imports, PyTorch extension ABI and TVM FFI JIT passed")
++
++
++def verify_tensorfold() -> None:
++    from tensorfold.families.qwen3_5.cuda.dflash2 import DFlash2  # noqa: F401
++
++    from vllm.v1.worker.gpu.spec_decode.dflash2 import (  # noqa: F401
++        tensorfold_attention,
++        tensorfold_commit,
++        tensorfold_round,
++    )
++
++    assert importlib.metadata.version("tensorfold") == "0.6.0"
++    print("TensorFold 0.6.0 Tree-DFlash2 and vLLM integration imports passed")
++
++
++if __name__ == "__main__":
++    if sys.argv[1:] == ["--tensorfold"]:
++        verify_tensorfold()
++    else:
++        main()
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 6fd9fb9044f85c941bcf13423d97bfcfdf9ac877..5fe2b561bcb955d8a99a1eb35da5b103852f2044 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -314,6 +314,8 @@ if TYPE_CHECKING:
+     VLLM_DEBUG_MFU_METRICS: bool = False
+     VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: bool = False
+     VLLM_WEIGHT_OFFLOADING_DISABLE_UVA: bool = False
++    VLLM_QWEN36_FREETOKEN: bool = False
++    VLLM_QWEN36_CACHE_GB: float = 13.0
+     VLLM_KV_OFFLOAD_MAX_BATCH_DESCRIPTORS: int = 0
+     VLLM_WSL2_ENABLE_PIN_MEMORY: bool = False
+     VLLM_DISABLE_LOG_LOGO: bool = False
+@@ -2167,6 +2169,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_WEIGHT_OFFLOADING_DISABLE_UVA": lambda: bool(
+         int(os.getenv("VLLM_WEIGHT_OFFLOADING_DISABLE_UVA", "0"))
+     ),
++    # Enable the optional FreeToken expert path for Qwen3.6-35B-A3B BF16.
++    "VLLM_QWEN36_FREETOKEN": lambda: bool(int(os.getenv("VLLM_QWEN36_FREETOKEN", "0"))),
++    # GPU expert pool size in GiB, including both full-layer prefill buffers.
++    "VLLM_QWEN36_CACHE_GB": lambda: float(os.getenv("VLLM_QWEN36_CACHE_GB", "13")),
+     # Max descriptors per CPU-KV-offload batch-memcpy call. 0 = platform default
+     # (ROCm chunks at 8192, since hipMemcpyBatchAsync faults above that on
+     # rocm 7.14/7.15 when batch copy is optimized; CUDA uncapped). Set >0 to override.
+diff --git a/vllm/model_executor/layers/fused_moe/qwen36_freetoken.py b/vllm/model_executor/layers/fused_moe/qwen36_freetoken.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..bf5256ce028cd2356221001fe39292f3003e6a93
+--- /dev/null
++++ b/vllm/model_executor/layers/fused_moe/qwen36_freetoken.py
+@@ -0,0 +1,302 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""FreeToken expert offload for the BF16 Qwen3.6-35B-A3B single-GPU path."""
++
++from __future__ import annotations
++
++import math
++from typing import TYPE_CHECKING
++
++import torch
++
++import vllm.envs as envs
++from vllm.config.compilation import CompilationMode, CUDAGraphMode
++from vllm.logger import init_logger
++from vllm.model_executor.layers.fused_moe.activation import MoEActivation
++from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
++    UnquantizedMoeBackend,
++)
++from vllm.model_executor.layers.fused_moe.routed_experts import RoutedExperts
++from vllm.model_executor.layers.fused_moe.unquantized_fused_moe_method import (
++    UnquantizedFusedMoEMethod,
++)
++from vllm.platforms import current_platform
++from vllm.triton_utils import tl, triton
++
++if TYPE_CHECKING:
++    from freetoken.layers.moe import OffloadMoELayer
++    from freetoken.moe.offload_cache import OffloadMoeCache
++
++    from vllm.config import VllmConfig
++    from vllm.model_executor.layers.fused_moe.runner.shared_experts import SharedExperts
++
++logger = init_logger(__name__)
++
++NUM_LAYERS = 40
++NUM_EXPERTS = 256
++TOP_K = 8
++HIDDEN_SIZE = 2048
++INTERMEDIATE_SIZE = 512
++EXPERT_BYTES = 3 * HIDDEN_SIZE * INTERMEDIATE_SIZE * 2
++GIB = 1024**3
++
++
++@triton.jit
++def _prepare_decode_routes(
++    ids_ptr,
++    weights_ptr,
++    safe_ids_ptr,
++    safe_weights_ptr,
++    no_valid_route_ptr,
++    top_k: tl.constexpr,
++    num_experts: tl.constexpr,
++):
++    offsets = tl.arange(0, top_k)
++    ids = tl.load(ids_ptr + offsets)
++    weights = tl.load(weights_ptr + offsets)
++    valid = (ids >= 0) & (ids < num_experts)
++    fallback = tl.min(tl.where(valid, ids, num_experts), 0)
++    no_valid_route = fallback == num_experts
++    tl.store(
++        safe_ids_ptr + offsets,
++        tl.where(valid, ids, tl.where(no_valid_route, 0, fallback)),
++    )
++    tl.store(safe_weights_ptr + offsets, tl.where(valid, weights, 0.0))
++    tl.store(no_valid_route_ptr, no_valid_route)
++
++
++def _get_cpu_bank(
++    weight: torch.nn.Parameter, shape: tuple[int, ...], name: str
++) -> torch.Tensor:
++    source = getattr(weight, "_vllm_uva_cpu_data", None)
++    if source is None or source[1] != weight.data_ptr():
++        raise RuntimeError(f"FreeToken needs the current UVA CPU bank for {name}")
++    bank = source[0]
++    if (
++        bank.device.type != "cpu"
++        or not bank.is_pinned()
++        or bank.dtype != torch.bfloat16
++        or bank.shape != shape
++        or not bank.is_contiguous()
++    ):
++        raise RuntimeError(f"FreeToken needs a contiguous pinned BF16 bank for {name}")
++    return bank
++
++
++class Qwen36FreeTokenRuntime:
++    """Own one cache per model and initialize it after weight loading."""
++
++    def __init__(self, vllm_config: VllmConfig):
++        model = vllm_config.model_config
++        config = model.hf_text_config
++        if (
++            config.num_hidden_layers,
++            config.num_experts,
++            config.num_experts_per_tok,
++            config.hidden_size,
++            config.moe_intermediate_size,
++        ) != (NUM_LAYERS, NUM_EXPERTS, TOP_K, HIDDEN_SIZE, INTERMEDIATE_SIZE):
++            raise ValueError("FreeToken requires Qwen3.6-35B-A3B expert geometry")
++        if model.dtype != torch.bfloat16 or vllm_config.quant_config is not None:
++            raise ValueError("FreeToken requires unquantized BF16 model weights")
++        parallel = vllm_config.parallel_config
++        if (
++            not current_platform.is_cuda()
++            or parallel.world_size_across_dp != 1
++            or parallel.enable_expert_parallel
++            or parallel.use_ubatching
++            or vllm_config.scheduler_config.max_num_seqs != 1
++            or vllm_config.speculative_config is not None
++            or vllm_config.lora_config is not None
++            or model.enable_sleep_mode
++        ):
++            raise ValueError(
++                "FreeToken requires one CUDA GPU and one sequence, with "
++                "speculation, LoRA, sleep mode and microbatching disabled"
++            )
++        compilation = vllm_config.compilation_config
++        if (
++            compilation.mode != CompilationMode.NONE
++            or compilation.cudagraph_mode
++            not in (
++                CUDAGraphMode.NONE,
++                CUDAGraphMode.FULL_DECODE_ONLY,
++            )
++        ):
++            raise ValueError("FreeToken requires mode=0 and NONE or FULL_DECODE_ONLY")
++        offload = vllm_config.offload_config
++        min_offload_gib = NUM_LAYERS * NUM_EXPERTS * EXPERT_BYTES / GIB
++        if (
++            offload.offload_backend != "uva"
++            or offload.uva.cpu_offload_gb < min_offload_gib
++            or envs.VLLM_WEIGHT_OFFLOADING_DISABLE_UVA
++            or envs.VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY
++        ):
++            raise ValueError(
++                f"FreeToken requires at least {min_offload_gib:g} GiB of pinned UVA "
++                "offload for the routed expert weights"
++            )
++        cache_gib = envs.VLLM_QWEN36_CACHE_GB
++        if (
++            not math.isfinite(cache_gib)
++            or cache_gib * GIB < 2 * NUM_EXPERTS * EXPERT_BYTES
++        ):
++            raise ValueError("FreeToken GPU cache must fit two complete expert layers")
++        self.cache_slots = int(cache_gib * GIB) // EXPERT_BYTES
++        self.layers: list[Qwen36FreeTokenRoutedExperts] = []
++        self.cache: OffloadMoeCache | None = None
++        self.decode_layers: list[OffloadMoELayer] = []
++
++    def initialize(self, device: torch.device) -> OffloadMoeCache:
++        try:
++            from freetoken.distributed.info import set_tp_info, try_get_tp_info
++            from freetoken.layers.moe import OffloadMoELayer
++            from freetoken.moe.offload_cache import OffloadMoeCache
++        except ImportError as exc:
++            raise RuntimeError(
++                "Install the FreeToken CUDA runtime before enabling "
++                "VLLM_QWEN36_FREETOKEN"
++            ) from exc
++
++        if len(self.layers) != NUM_LAYERS:
++            raise RuntimeError("FreeToken requires all routed expert layers")
++
++        gate_up = [
++            _get_cpu_bank(
++                layer.w13_weight,
++                (NUM_EXPERTS, 2 * INTERMEDIATE_SIZE, HIDDEN_SIZE),
++                f"{layer.layer_name}.w13_weight",
++            )
++            for layer in self.layers
++        ]
++        down = [
++            _get_cpu_bank(
++                layer.w2_weight,
++                (NUM_EXPERTS, HIDDEN_SIZE, INTERMEDIATE_SIZE),
++                f"{layer.layer_name}.w2_weight",
++            )
++            for layer in self.layers
++        ]
++        tp_info = try_get_tp_info()
++        if tp_info is None:
++            set_tp_info(rank=0, size=1)
++        elif (tp_info.rank, tp_info.size) != (0, 1):
++            raise RuntimeError("FreeToken requires TP rank 0 of 1")
++
++        cache = OffloadMoeCache(
++            num_layers=NUM_LAYERS,
++            num_experts=NUM_EXPERTS,
++            cache_size=self.cache_slots,
++            device=device,
++            cache_policy="lru",
++            prefill_overlap=True,
++            prefill_hit_d2d=False,
++            quant_format="bf16",
++            decode_target="gpu",
++        )
++        cache.set_bank_sources({"gate_up": gate_up, "down": down})
++        cache.collect_stats = False
++        decode_layers = [
++            OffloadMoELayer(
++                layer_id=layer_id,
++                num_experts=NUM_EXPERTS,
++                top_k=TOP_K,
++                hidden_size=HIDDEN_SIZE,
++                intermediate_size=INTERMEDIATE_SIZE,
++                renormalize=True,
++                activation="silu",
++                apply_router_weight_on_input=False,
++            )
++            for layer_id in range(NUM_LAYERS)
++        ]
++        for layer in decode_layers:
++            layer.offload_cache = cache
++        self.decode_layers = decode_layers
++        self.cache = cache
++        self.layers.clear()
++        logger.info(
++            "Qwen FreeToken enabled: %d GPU slots, double-buffered prefill, GPU decode",
++            self.cache_slots,
++        )
++        return cache
++
++
++class Qwen36FreeTokenRoutedExperts(RoutedExperts):
++    """Keep vLLM routing and shared experts, replacing routed expert execution."""
++
++    def __init__(self, *args, runtime: Qwen36FreeTokenRuntime, layer_id: int, **kwargs):
++        super().__init__(*args, **kwargs)
++        method = self.quant_method
++        if (
++            not isinstance(method, UnquantizedFusedMoEMethod)
++            or method.unquantized_backend != UnquantizedMoeBackend.TRITON
++            or method.is_monolithic
++            or self.activation != MoEActivation.SILU
++            or self.moe_config.has_bias
++            or self.apply_router_weight_on_input
++        ):
++            raise ValueError("FreeToken requires the modular BF16 Triton MoE backend")
++        if layer_id != len(runtime.layers):
++            raise RuntimeError("FreeToken expert layers must be registered in order")
++        self._freetoken = runtime
++        self._freetoken_layer_id = layer_id
++        self.w13_weight._vllm_retain_uva_cpu_data = True
++        self.w2_weight._vllm_retain_uva_cpu_data = True
++        runtime.layers.append(self)
++
++    def forward_modular(
++        self,
++        x: torch.Tensor,
++        topk_weights: torch.Tensor,
++        topk_ids: torch.Tensor,
++        shared_experts: SharedExperts | None = None,
++        shared_experts_input: torch.Tensor | None = None,
++    ) -> torch.Tensor:
++        runtime = self._freetoken
++        cache = runtime.cache
++        if cache is None:
++            cache = runtime.initialize(x.device)
++        layer_id = self._freetoken_layer_id
++        if x.shape[0] == 1:
++            # The vLLM router emits -1 for padding, including the capture warmup.
++            # FreeToken's slot cache requires every index to name a real expert.
++            ids = topk_ids.contiguous()
++            weights = topk_weights.contiguous()
++            safe_ids = torch.empty_like(ids)
++            safe_weights = torch.empty_like(weights)
++            no_valid_route = torch.empty(1, dtype=torch.bool, device=x.device)
++            _prepare_decode_routes[(1,)](
++                ids, weights, safe_ids, safe_weights, no_valid_route, TOP_K, NUM_EXPERTS
++            )
++            # FreeToken rewrites the scratch IDs to cache slot IDs in place.
++            routed = runtime.decode_layers[layer_id]._decode_routed(
++                x, safe_weights, safe_ids
++            )
++            return routed.masked_fill_(no_valid_route, 0)
++
++        kernel = self.quant_method.moe_kernel
++        assert kernel is not None
++        if layer_id == 0:
++            logger.debug("Qwen expert prefill chunk: tokens=%d", x.shape[0])
++            cache.begin_prefill()
++        cache.prefetch_prefill_layer(layer_id)
++        if layer_id + 1 < NUM_LAYERS:
++            cache.prefetch_prefill_layer(layer_id + 1)
++        views = cache.wait_prefill_layer(layer_id)
++        try:
++            w1, w2 = views
++            return kernel.apply(
++                hidden_states=x,
++                w1=w1,
++                w2=w2,
++                topk_weights=topk_weights,
++                topk_ids=topk_ids,
++                activation=self.activation,
++                global_num_experts=self.global_num_experts,
++                expert_map=self.expert_map,
++                apply_router_weight_on_input=self.apply_router_weight_on_input,
++                shared_experts=shared_experts,
++                shared_experts_input=shared_experts_input,
++            )
++        finally:
++            cache.release_prefill_layer(layer_id)
+diff --git a/vllm/model_executor/model_loader/reload/inplace.py b/vllm/model_executor/model_loader/reload/inplace.py
+index dfe11ed4e7458bd9f3a914c9c86e1a2df2294faf..2cab2cac2e9201e8107d6ead50178be81e084f3b 100644
+--- a/vllm/model_executor/model_loader/reload/inplace.py
++++ b/vllm/model_executor/model_loader/reload/inplace.py
+@@ -52,6 +52,9 @@ def reload_weights(
+             processed into kernel format (repacking, renaming, etc.)
+ 
+     """
++    if any(getattr(p, "_vllm_retain_uva_cpu_data", False) for p in model.parameters()):
++        raise NotImplementedError("In-place reload with FreeToken requires a restart")
++
+     # TODO(@kylesayrs): generalize to all runners and loaders
+     # argument validation
+     if weights_iterator is None and not is_checkpoint_format:
+diff --git a/vllm/model_executor/models/qwen3_5.py b/vllm/model_executor/models/qwen3_5.py
+index f105948f9283231d84e537ddf29f03e0522bae1f..9c58b4e4403dee03dac62eb2bb87f9b7d743aa8b 100644
+--- a/vllm/model_executor/models/qwen3_5.py
++++ b/vllm/model_executor/models/qwen3_5.py
+@@ -25,7 +25,7 @@
+ """Inference-only Qwen3.5 Series compatible with HuggingFace weights."""
+ 
+ from collections.abc import Iterable
+-from typing import ClassVar
++from typing import TYPE_CHECKING, ClassVar
+ 
+ import torch
+ from torch import nn
+@@ -36,6 +36,7 @@ from transformers import (
+     Qwen3_5TextConfig,
+ )
+ 
++import vllm.envs as envs
+ from vllm.compilation.decorators import support_torch_compile
+ from vllm.config import VllmConfig
+ from vllm.distributed import (
+@@ -105,6 +106,11 @@ from .utils import (
+     maybe_prefix,
+ )
+ 
++if TYPE_CHECKING:
++    from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
++        Qwen36FreeTokenRuntime,
++    )
++
+ logger = init_logger(__name__)
+ 
+ 
+@@ -128,6 +134,7 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+         vllm_config: VllmConfig,
+         layer_type: str,
+         prefix: str = "",
++        freetoken: "Qwen36FreeTokenRuntime | None" = None,
+     ) -> None:
+         super(Qwen3NextDecoderLayer, self).__init__()
+ 
+@@ -173,6 +180,7 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
+             self.mlp = Qwen3NextSparseMoeBlock(
+                 vllm_config=vllm_config,
+                 prefix=f"{prefix}.mlp",
++                freetoken=freetoken,
+             )
+         elif config.model_type == "qwen3_5_text":
+             self.mlp = Qwen3NextMLP(
+@@ -253,11 +261,20 @@ class Qwen3_5Model(Qwen3NextModel):
+             config.hidden_size,
+         )
+ 
++        freetoken = None
++        if envs.VLLM_QWEN36_FREETOKEN and config.model_type == "qwen3_5_moe_text":
++            from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
++                Qwen36FreeTokenRuntime,
++            )
++
++            freetoken = Qwen36FreeTokenRuntime(vllm_config)
++
+         def get_layer(prefix: str):
+             return Qwen3_5DecoderLayer(
+                 vllm_config,
+                 layer_type=config.layer_types[extract_layer_index(prefix)],
+                 prefix=prefix,
++                freetoken=freetoken,
+             )
+ 
+         self.start_layer, self.end_layer, self.layers = make_layers(
+diff --git a/vllm/model_executor/models/qwen3_next.py b/vllm/model_executor/models/qwen3_next.py
+index ee5c05d0a4ae0608b957df49fc4ae12f555f9b8c..ba20ca7e1f55f2640d097f69e01db877acc8c3e0 100644
+--- a/vllm/model_executor/models/qwen3_next.py
++++ b/vllm/model_executor/models/qwen3_next.py
+@@ -4,6 +4,7 @@
+ 
+ from collections.abc import Iterable
+ from itertools import islice
++from typing import TYPE_CHECKING
+ 
+ import torch
+ from torch import nn
+@@ -81,6 +82,11 @@ from .utils import (
+     maybe_prefix,
+ )
+ 
++if TYPE_CHECKING:
++    from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
++        Qwen36FreeTokenRuntime,
++    )
++
+ KVCache = tuple[torch.Tensor, torch.Tensor]
+ 
+ 
+@@ -134,6 +140,7 @@ class Qwen3NextSparseMoeBlock(nn.Module):
+         vllm_config: VllmConfig,
+         prefix: str = "",
+         reduce_results: bool = True,
++        freetoken: "Qwen36FreeTokenRuntime | None" = None,
+     ):
+         super().__init__()
+ 
+@@ -220,6 +227,21 @@ class Qwen3NextSparseMoeBlock(nn.Module):
+                 prefix=f"{prefix}.shared_expert",
+             )
+ 
++        routed_experts_cls = None
++        routed_experts_args = None
++        if freetoken is not None:
++            from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
++                Qwen36FreeTokenRoutedExperts,
++            )
++
++            if self.is_fused_shared_expert_enabled:
++                raise ValueError("FreeToken requires a separate shared expert")
++            routed_experts_cls = Qwen36FreeTokenRoutedExperts
++            routed_experts_args = {
++                "runtime": freetoken,
++                "layer_id": extract_layer_index(prefix),
++            }
++
+         self.experts = FusedMoEFactory(
+             shared_experts=(
+                 None if self.replicate_shared_expert else self.shared_expert
+@@ -242,6 +264,8 @@ class Qwen3NextSparseMoeBlock(nn.Module):
+             shared_expert_gate=self.shared_expert_gate
+             if self.shared_expert is None
+             else None,
++            routed_experts_cls=routed_experts_cls,
++            routed_experts_args=routed_experts_args,
+         )
+ 
+     def forward(
+diff --git a/vllm/model_executor/offloader/uva.py b/vllm/model_executor/offloader/uva.py
+index 5b76d2a9a1f0682b1389564a45c9732d452d24f8..59401fadbbf9788b53a8f513f92a1d133c20c9a8 100644
+--- a/vllm/model_executor/offloader/uva.py
++++ b/vllm/model_executor/offloader/uva.py
+@@ -120,6 +120,8 @@ class UVAOffloader(BaseOffloader):
+             else:
+                 p.data = get_accelerator_view_from_cpu_tensor(cpu_data)
+                 p._vllm_is_uva_offloaded = True
++                if getattr(p, "_vllm_retain_uva_cpu_data", False):
++                    p._vllm_uva_cpu_data = (cpu_data, p.data_ptr())
+ 
+             self.cpu_offload_bytes += p.data.numel() * p.data.element_size()
+             offloaded_parameters = True

@@ -314,6 +314,8 @@ if TYPE_CHECKING:
     VLLM_DEBUG_MFU_METRICS: bool = False
     VLLM_WEIGHT_OFFLOADING_DISABLE_PIN_MEMORY: bool = False
     VLLM_WEIGHT_OFFLOADING_DISABLE_UVA: bool = False
+    VLLM_QWEN36_FREETOKEN: bool = False
+    VLLM_QWEN36_CACHE_GB: float = 13.0
     VLLM_KV_OFFLOAD_MAX_BATCH_DESCRIPTORS: int = 0
     VLLM_WSL2_ENABLE_PIN_MEMORY: bool = False
     VLLM_DISABLE_LOG_LOGO: bool = False
@@ -2167,6 +2169,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     "VLLM_WEIGHT_OFFLOADING_DISABLE_UVA": lambda: bool(
         int(os.getenv("VLLM_WEIGHT_OFFLOADING_DISABLE_UVA", "0"))
     ),
+    # Enable the optional FreeToken expert path for Qwen3.6-35B-A3B BF16.
+    "VLLM_QWEN36_FREETOKEN": lambda: bool(int(os.getenv("VLLM_QWEN36_FREETOKEN", "0"))),
+    # GPU expert pool size in GiB, including both full-layer prefill buffers.
+    "VLLM_QWEN36_CACHE_GB": lambda: float(os.getenv("VLLM_QWEN36_CACHE_GB", "13")),
     # Max descriptors per CPU-KV-offload batch-memcpy call. 0 = platform default
     # (ROCm chunks at 8192, since hipMemcpyBatchAsync faults above that on
     # rocm 7.14/7.15 when batch copy is optimized; CUDA uncapped). Set >0 to override.

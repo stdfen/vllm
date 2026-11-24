@@ -4,6 +4,7 @@
 
 from collections.abc import Iterable
 from itertools import islice
+from typing import TYPE_CHECKING
 
 import torch
 from torch import nn
@@ -81,6 +82,11 @@ from .utils import (
     maybe_prefix,
 )
 
+if TYPE_CHECKING:
+    from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
+        Qwen36FreeTokenRuntime,
+    )
+
 KVCache = tuple[torch.Tensor, torch.Tensor]
 
 
@@ -134,6 +140,7 @@ class Qwen3NextSparseMoeBlock(nn.Module):
         vllm_config: VllmConfig,
         prefix: str = "",
         reduce_results: bool = True,
+        freetoken: "Qwen36FreeTokenRuntime | None" = None,
     ):
         super().__init__()
 
@@ -220,6 +227,21 @@ class Qwen3NextSparseMoeBlock(nn.Module):
                 prefix=f"{prefix}.shared_expert",
             )
 
+        routed_experts_cls = None
+        routed_experts_args = None
+        if freetoken is not None:
+            from vllm.model_executor.layers.fused_moe.qwen36_freetoken import (
+                Qwen36FreeTokenRoutedExperts,
+            )
+
+            if self.is_fused_shared_expert_enabled:
+                raise ValueError("FreeToken requires a separate shared expert")
+            routed_experts_cls = Qwen36FreeTokenRoutedExperts
+            routed_experts_args = {
+                "runtime": freetoken,
+                "layer_id": extract_layer_index(prefix),
+            }
+
         self.experts = FusedMoEFactory(
             shared_experts=(
                 None if self.replicate_shared_expert else self.shared_expert
@@ -242,6 +264,8 @@ class Qwen3NextSparseMoeBlock(nn.Module):
             shared_expert_gate=self.shared_expert_gate
             if self.shared_expert is None
             else None,
+            routed_experts_cls=routed_experts_cls,
+            routed_experts_args=routed_experts_args,
         )
 
     def forward(
