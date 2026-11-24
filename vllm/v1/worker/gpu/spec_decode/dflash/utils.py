@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+from copy import copy
+
 import torch.nn as nn
 
 from vllm.config import VllmConfig, replace
@@ -22,10 +24,17 @@ def load_dflash_model(target_model: nn.Module, vllm_config: VllmConfig) -> nn.Mo
     speculative_config = vllm_config.speculative_config
     assert speculative_config is not None
     draft_model_config = speculative_config.draft_model_config
+    if speculative_config.enable_tree_dflash2:
+        # Keep the draft model metadata but apply tree verification only to
+        # the target. Rebuilding the draft VllmConfig runs config validation.
+        speculative_config = copy(speculative_config)
+        speculative_config.enable_tree_dflash2 = False
+
     # Select an attention backend that supports the drafter's attention: mixing
     # a non-causal layer onto a causal-only backend would fail.
     draft_vllm_config = replace(
         vllm_config,
+        speculative_config=speculative_config,
         attention_config=replace(
             vllm_config.attention_config,
             use_non_causal=dflash_has_any_non_causal(draft_model_config.hf_config),

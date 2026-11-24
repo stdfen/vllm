@@ -220,6 +220,8 @@ def kernel_unified_attention(
     USE_CAUSAL: tl.constexpr,  # bool
     USE_PER_SEQ_CAUSAL: tl.constexpr,  # bool
     per_seq_causal_ptr,  # [num_seqs] int32, or None
+    tree_ancestor_bits_ptr,
+    USE_TREE: tl.constexpr,
     USE_MM_PREFIX: tl.constexpr,  # bool
     MAX_MM_RANGES: tl.constexpr,  # int
     mm_prefix_range_ptr,
@@ -538,6 +540,18 @@ def kernel_unified_attention(
             CHUNK_SIZE,
             MM_PREFIX_CLAMP_SW,
         )
+        if USE_TREE:
+            bits = tl.load(
+                tree_ancestor_bits_ptr + query_offset_0,
+                mask=query_mask_0,
+                other=0,
+            )
+            local_key = seq_offset - context_len
+            # Shift only by valid amounts, including when reading prefix tiles.
+            local_bit = tl.minimum(tl.maximum(local_key, 0), 31)
+            seq_mask &= (local_key[None, :] < 0) | (
+                ((bits[:, None] >> local_bit[None, :]) & 1) != 0
+            )
 
         # S : (BLOCK_M, TILE_SIZE)
         S = tl.zeros(shape=(BLOCK_M, TILE_SIZE), dtype=tl.float32)
@@ -873,6 +887,7 @@ def unified_attention(
     # Gemma4: clamp mm_prefix bidirectional ranges by the sliding window.
     # Default False keeps the original behavior for every other model.
     mm_prefix_clamp_sliding_window: bool = False,
+    tree_ancestor_bits=None,
 ):
     # Resolve causal: bool or per-seq tensor.
     use_per_seq_causal = isinstance(causal, torch.Tensor)
@@ -1170,6 +1185,8 @@ def unified_attention(
         USE_CAUSAL=use_causal,
         USE_PER_SEQ_CAUSAL=use_per_seq_causal,
         per_seq_causal_ptr=per_seq_causal_ptr,
+        tree_ancestor_bits_ptr=tree_ancestor_bits,
+        USE_TREE=tree_ancestor_bits is not None,
         USE_MM_PREFIX=use_mm_prefix,
         MAX_MM_RANGES=max_mm_ranges,
         mm_prefix_range_ptr=mm_prefix_range,

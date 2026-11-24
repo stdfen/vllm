@@ -298,6 +298,51 @@ def test_speculative_splitk_bf16_query_fp8_kv(monkeypatch):
     assert len(reduce_grids) == 1
 
 
+def test_tree_attention_hides_siblings_across_paged_fp8_blocks() -> None:
+    context, width, block, head = 14, 8, 16, 128
+    seq_len = context + width
+    device = DEVICE_TYPE
+    mask_values = [1, 3, 5, 11, 21, 43, 85, 171]
+    # Page table reverses physical blocks, with siblings on both pages.
+    positions = torch.arange(seq_len, device=device)
+    page = 1 - positions // block
+    offset = positions % block
+    values = torch.tensor([*range(context), 1, 2, 4, 8, 16, 32, 64, 128], device=device)
+    key = torch.zeros((2, block, 1, head), dtype=torch.bfloat16, device=device)
+    val = torch.zeros_like(key)
+    val[page, offset] = values[:, None, None].to(val.dtype)
+    q = torch.zeros((width, 2, head), dtype=torch.bfloat16, device=device)
+    out = torch.empty_like(q)
+    scales = torch.ones((1, 1), dtype=torch.float32, device=device)
+    unified_attention(
+        q=q,
+        k=key.to(FP8_DTYPE),
+        v=val.to(FP8_DTYPE),
+        out=out,
+        cu_seqlens_q=torch.tensor([0, width], dtype=torch.int32, device=device),
+        max_seqlen_q=width,
+        seqused_k=torch.tensor([seq_len], dtype=torch.int32, device=device),
+        max_seqlen_k=seq_len,
+        softmax_scale=head**-0.5,
+        causal=True,
+        window_size=(-1, -1),
+        block_table=torch.tensor([[1, 0]], dtype=torch.int32, device=device),
+        softcap=0.0,
+        q_descale=None,
+        k_descale=scales,
+        v_descale=scales,
+        kv_quant_mode=KVQuantMode.FP8_PER_TENSOR,
+        tree_ancestor_bits=torch.tensor(mask_values, dtype=torch.int32, device=device),
+    )
+    prefix = values[:context]
+    expected = []
+    for bits in mask_values:
+        nodes = [context + i for i in range(width) if bits & (1 << i)]
+        expected.append(torch.cat([prefix, values[nodes]]).float().mean())
+    expected = torch.stack(expected).to(out.dtype)[:, None, None]
+    torch.testing.assert_close(out, expected.expand_as(out))
+
+
 @triton.jit
 def _compute_clamped_mm_tile_bounds(
     output_ptr,

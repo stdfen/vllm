@@ -23,7 +23,7 @@ from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from copy import deepcopy
 from dataclasses import replace
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 import torch
@@ -193,6 +193,12 @@ from vllm.v1.worker.utils import (
 )
 from vllm.v1.worker.workspace import lock_workspace, use_workspace_lane
 
+if TYPE_CHECKING:
+    from vllm.v1.worker.gpu.spec_decode.dflash2.tensorfold_round import (
+        TensorFoldTreeDFlash2,
+    )
+    from vllm.v1.worker.gpu.spec_decode.dflash2.tree_replay import TreeDFlash2
+
 logger = init_logger(__name__)
 
 
@@ -296,9 +302,27 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # Speculative decoding.
         self.speculator = None
+        self.tree_dflash2: TreeDFlash2 | None = None
+        self.tensorfold_tree: TensorFoldTreeDFlash2 | None = None
+        self.tensorfold_compile_prefill = (
+            self.speculative_config is not None
+            and self.speculative_config.tree_dflash2_tensorfold_compile_prefill
+        )
         self.use_aux_hidden_state_outputs = False
         if self.speculative_config is not None:
-            if self.is_last_pp_rank:
+            tensorfold_tree = (
+                self.speculative_config.enable_tree_dflash2
+                and self.speculative_config.tree_dflash2_mode == "tensorfold"
+            )
+            if tensorfold_tree:
+                from vllm.v1.worker.gpu.spec_decode.dflash2.tensorfold_round import (
+                    TensorFoldTreeDFlash2 as RuntimeTensorFoldTreeDFlash2,
+                )
+
+                self.tensorfold_tree = RuntimeTensorFoldTreeDFlash2(
+                    self.vllm_config, self.device
+                )
+            elif self.is_last_pp_rank:
                 self.speculator = init_speculator(
                     self.vllm_config, self.device, self.req_states
                 )
@@ -306,6 +330,20 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.use_aux_hidden_state_outputs = requires_aux_hidden_states(
                 self.speculative_config
             )
+            if self.speculative_config.enable_tree_dflash2 and not tensorfold_tree:
+                from vllm.v1.worker.gpu.spec_decode.dflash2.speculator import (
+                    DFlash2Speculator,
+                )
+                from vllm.v1.worker.gpu.spec_decode.dflash2.tree_replay import (
+                    TreeDFlash2 as RuntimeTreeDFlash2,
+                )
+
+                assert isinstance(self.speculator, DFlash2Speculator)
+                self.tree_dflash2 = RuntimeTreeDFlash2(
+                    self.speculator,
+                    self.speculative_config.tree_dflash2_max_replays,
+                    self.speculative_config.tree_dflash2_mode,
+                )
 
         # Draft tokens propagation - for spec-dec + struct outputs.
         self.draft_tokens_handler = DraftTokensHandler(self.device)
@@ -416,6 +454,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 )
                 if self.pp_handler is not None:
                     self.pp_handler.configure_aux_hidden_state_relay(self.model)
+            if self.tensorfold_tree is not None:
+                self.tensorfold_tree.load_drafter(self.model)
             if isinstance(self.speculator, DraftModelSpeculator):
                 with use_workspace_lane(self._draft_workspace_lane):
                     self.speculator.load_model(self.model)
@@ -745,8 +785,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.kv_cache_config,
             use_replayssm=self.cache_config.use_replayssm,
         )
+        has_compiled_target = has_compiled_submodule(self.model)
+        if self.tensorfold_compile_prefill and not has_compiled_target:
+            raise RuntimeError(
+                "Compiled TensorFold prefill requires a compiled target."
+            )
         piecewise_capture_available = bool(
-            envs.VLLM_USE_BREAKABLE_CUDAGRAPH or has_compiled_submodule(self.model)
+            envs.VLLM_USE_BREAKABLE_CUDAGRAPH or has_compiled_target
         )
         if self.adaptive_verification is not None:
             self.compilation_config.cudagraph_mode = resolve_adaptive_cudagraph_mode(
@@ -1171,6 +1216,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Call model_state.remove_request *before* req_states.remove_request
         # so the model_state can still look up the slot index.
         self.model_state.remove_request(req_id)
+        tree = self.tensorfold_tree or self.tree_dflash2
+        if tree is not None:
+            tree.remove_request(req_id)
         req_idx = self.req_states.remove_request(req_id)
         if req_idx is None:
             return False
@@ -1224,6 +1272,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
             prompt_len = new_req_data.prompt_len
             sampling_params = new_req_data.sampling_params
+            tree = self.tensorfold_tree or self.tree_dflash2
+            if tree is not None:
+                tree.add_request(req_id, sampling_params)
             self.req_states.add_request(
                 req_id=req_id,
                 prompt_len=prompt_len,
@@ -1684,12 +1735,22 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         else:
             # Rejection sampling for spec decoding.
             assert self.rejection_sampler is not None
-            assert self.speculator is not None
+            if self.tensorfold_tree is not None:
+                # Ordinary forward verified the flattened drafts as a linear
+                # prefix. TensorFold only proposes drafts for greedy requests.
+                draft_logits = None
+                if input_batch.has_prefill:
+                    logger.info_once(
+                        "TensorFold Tree-DFlash2 used linear verification "
+                        "for a mixed prefill/decode batch."
+                    )
+            else:
+                assert self.speculator is not None
+                draft_logits = self.speculator.draft_logits
             sampler_output = self.rejection_sampler(
                 logits,
                 input_batch,
-                # Draft logits are needed for probabilistic rejection sampling.
-                self.speculator.draft_logits,
+                draft_logits,
                 invalid_drafts,
             )
 
@@ -1772,6 +1833,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         valid_dummy_state_slots: bool = False,
         randomize_inputs: bool = False,
     ) -> ModelRunnerOutput | IntermediateTensors | None:
+        if self.tensorfold_tree is not None:
+            self.tensorfold_tree.wait_for_commit()
         if not dummy_run:
             # Update the request states.
             self.update_pp_decode_requests()
@@ -1823,6 +1886,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
         skip_compiled = False
+        if self.tensorfold_compile_prefill and batch_req_state is not None:
+            # Tree verification needs the eager forward and its dynamic metadata.
+            # A mixed batch already uses the regular linear target forward.
+            skip_compiled = not batch_req_state.has_prefill
+            if not skip_compiled:
+                logger.info_once("TensorFold dispatched a compiled prefill batch.")
         if self.is_encoder_decoder and scheduler_output.scheduled_encoder_inputs:
             # Encoder-decoder models such as Whisper should run eager/non-compiled
             # when encoder inputs are scheduled, because this step updates
@@ -2048,6 +2117,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.step_timing.forward_start()
 
         # Run model.
+        tree_sample_result = None
         if batch_desc.cg_mode == CUDAGraphMode.FULL:
             # Use explicit cudagraph replay for FULL mode.
             # NOTE(woosuk): Here, we don't need to pass the input tensors,
@@ -2094,7 +2164,24 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     )
                 else:
                     # Eager (NONE): call the raw model directly.
-                    model_output = self.model(**model_inputs)
+                    tree = self.tensorfold_tree or self.tree_dflash2
+                    if tree is not None and not dummy_run:
+                        assert attn_metadata is not None
+                        assert model_inputs["input_ids"] is input_batch.input_ids
+                        model_output, tree_sample_result = tree.verify(
+                            input_batch,
+                            attn_metadata,
+                            self.compilation_config.static_forward_context,
+                            lambda: self.model(**model_inputs),
+                            lambda hidden: self.sample(hidden, input_batch, None),
+                            model_inputs["positions"],
+                            lambda ids, pos: self.model(
+                                **(model_inputs | {"input_ids": ids, "positions": pos})
+                            ),
+                            self.model.compute_logits,
+                        )
+                    else:
+                        model_output = self.model(**model_inputs)
 
         self.kv_connector.finish_forward()
 
@@ -2133,6 +2220,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             num_spec_tokens_to_schedule=(
                 0 if skip_drafts else scheduler_output.num_spec_tokens_to_schedule
             ),
+            tree_sample_result=tree_sample_result,
         )
 
         if not self.is_last_pp_rank:
@@ -2163,6 +2251,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         ec_connector_output = self.execute_model_state.ec_connector_output
         cudagraph_stats = self.execute_model_state.cudagraph_stats
         num_spec_tokens = self.execute_model_state.num_spec_tokens_to_schedule
+        tree_sample_result = self.execute_model_state.tree_sample_result
         self.execute_model_state = None
 
         if not self.is_last_pp_rank:
@@ -2197,9 +2286,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.pcp_manager.restore_for_sampling(hidden_states, aux_hidden_states)
             )
 
-        sampler_output, num_sampled, num_rejected = self.sample(
-            hidden_states, input_batch, grammar_output
-        )
+        if tree_sample_result is None:
+            sampler_output, num_sampled, num_rejected = self.sample(
+                hidden_states, input_batch, grammar_output
+            )
+        else:
+            assert grammar_output is None
+            sampler_output, num_sampled, num_rejected = tree_sample_result
 
         if self.pp_handler is not None:
             # Broadcast to non-last PP ranks (handles spec decode multi-token).
@@ -2324,12 +2417,31 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             if num_spec_tokens < self.num_speculative_steps:
                 draft_tokens[:, num_spec_tokens:] = -1
             self.req_states.draft_tokens[input_batch.idx_mapping] = draft_tokens
+            if self.tree_dflash2 is not None:
+                self.tree_dflash2.record(input_batch.req_ids, num_spec_tokens)
             if self.adaptive_verification is not None:
                 self.adaptive_verification.record_confidences(
                     self.speculator.draft_token_confidence_probs, input_batch
                 )
 
-        if self.num_speculative_steps > 0:
+        if self.tensorfold_tree is not None:
+            assert aux_hidden_states is not None
+            try:
+                drafts = self.tensorfold_tree.propose(
+                    input_batch,
+                    aux_hidden_states,
+                    num_sampled,
+                    num_rejected,
+                    self.req_states.last_sampled_tokens,
+                    num_spec_tokens,
+                )
+            finally:
+                self.tensorfold_tree.wait_for_commit()
+            self.tensorfold_tree.store_draft_tokens(
+                input_batch, drafts, self.req_states.draft_tokens
+            )
+            self.draft_tokens_handler.set_cpu_draft_tokens(input_batch.req_ids, drafts)
+        elif self.num_speculative_steps > 0:
             # Spec-decode and diffusion LLMs both use draft tokens but the latter does
             # not have a speculator (i.e. self.speculator is None)
             draft_tokens = self.req_states.draft_tokens[input_batch.idx_mapping]
@@ -2483,6 +2595,7 @@ class ExecuteModelState(NamedTuple):
     ec_connector_output: ECConnectorOutput | None
     cudagraph_stats: CUDAGraphStat | None
     num_spec_tokens_to_schedule: int
+    tree_sample_result: tuple[SamplerOutput, torch.Tensor, torch.Tensor] | None = None
 
 
 class BatchReqState(NamedTuple):

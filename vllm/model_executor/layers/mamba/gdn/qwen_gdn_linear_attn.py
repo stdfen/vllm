@@ -2136,6 +2136,10 @@ class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
             output_gate_flat.size(0), -1, self.head_v_dim
         )
         b, a = self.split_ba(ba)
+        tree = forward_context.additional_kwargs.get("tree_dflash2")
+        if tree is not None:
+            tree.gdn(self, mixed_qkv, b, a, output_gate, core_attn_out)
+            return
         self._forward_core_fused_norm(
             mixed_qkv=mixed_qkv,
             b=b,

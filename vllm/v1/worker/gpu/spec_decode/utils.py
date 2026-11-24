@@ -54,12 +54,14 @@ class DraftTokensHandler:
 
         self.req_ids: list[str] = []
         self.draft_tokens_np: np.ndarray | None = None
+        self.draft_tokens_cpu: list[list[int]] | None = None
         self.num_draft_tokens: int = 0
 
     def set_draft_tokens(
         self, input_batch: InputBatch, draft_tokens: torch.Tensor
     ) -> None:
         self.req_ids = input_batch.req_ids
+        self.draft_tokens_cpu = None
         self.num_draft_tokens = draft_tokens.shape[1]
         if not input_batch.has_structured_output_reqs:
             # No draft token validation needs to be performed by
@@ -79,8 +81,17 @@ class DraftTokensHandler:
             draft_tokens.record_stream(self.copy_stream)
             self.copy_event.record()
 
+    def set_cpu_draft_tokens(
+        self, req_ids: list[str], draft_token_ids: list[list[int]]
+    ) -> None:
+        self.req_ids = req_ids
+        self.draft_tokens_cpu = draft_token_ids
+        self.draft_tokens_np = None
+
     def get_draft_tokens(self) -> DraftTokenIds | None:
-        if self.draft_tokens_np is not None:
+        if self.draft_tokens_cpu is not None:
+            draft_token_ids = self.draft_tokens_cpu
+        elif self.draft_tokens_np is not None:
             self.copy_event.synchronize()
             draft_token_ids = self.draft_tokens_np.tolist()
         else:

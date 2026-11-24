@@ -13,7 +13,11 @@ from vllm.config import (
     get_current_vllm_config,
 )
 from vllm.config.vllm import VllmConfig
-from vllm.forward_context import ForwardContext, get_forward_context
+from vllm.forward_context import (
+    ForwardContext,
+    get_forward_context,
+    is_forward_context_available,
+)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.attention.kv_transfer_utils import (
     maybe_transfer_kv_layer,
@@ -522,6 +526,11 @@ class Attention(nn.Module, AttentionLayerBase):
             if (
                 self.impl.supports_quant_query_input
                 and query.dtype != current_platform.fp8_dtype()
+                and not (
+                    is_forward_context_available()
+                    and "tensorfold_tree_attention"
+                    in get_forward_context().additional_kwargs
+                )
             ):
                 query, _ = self.query_quant(query, self._q_scale)
 
@@ -785,6 +794,12 @@ def unified_attention_with_output(
     del kv_cache_dummy_dep
     layer_name = _resolve_layer_name(layer_name)
     attn_metadata, self, kv_cache, _ = get_attention_context(layer_name)
+    tree = get_forward_context().additional_kwargs.get("tensorfold_tree_attention")
+    if tree is not None:
+        assert key is not None and value is not None
+        assert output_scale is None and output_block_scale is None
+        tree.attention(layer_name, self, query, key, value, output)
+        return
 
     self.impl.forward(
         self,

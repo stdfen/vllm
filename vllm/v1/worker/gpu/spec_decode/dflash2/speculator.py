@@ -196,6 +196,7 @@ class DFlash2Speculator(DFlashSpeculator):
         self.candidate_sampler = CandidateSampler(
             self.max_num_reqs, self.num_speculative_steps, self.top_k, device
         )
+        self.tree_candidates: tuple[torch.Tensor, torch.Tensor] | None = None
 
     def draft_logits_spec(self, vllm_config: VllmConfig) -> tuple[torch.dtype, float]:
         # fp32 so the walk and the rejection that checks it read the same
@@ -231,6 +232,8 @@ class DFlash2Speculator(DFlashSpeculator):
         )
         unary_logits = unary_logits.view_as(candidate_ids)
         scores = self._score_candidates(candidate_ids, unary_logits, hidden_states)
+        if self.speculative_config.enable_tree_dflash2:
+            self.tree_candidates = candidate_ids, scores
         self.candidate_sampler.sample(
             candidate_ids,
             scores,

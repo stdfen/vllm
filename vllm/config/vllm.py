@@ -2098,6 +2098,7 @@ class VllmConfig:
         self._validate_profiler_config()
         self._validate_batch_sharded_sampling()
         self._validate_adaptive_verification()
+        self._validate_tree_dflash2()
 
         # Re-compute compile ranges after platform-specific config updates
         # (e.g., XPU may lower max_num_batched_tokens when MLA is enabled)
@@ -3149,6 +3150,87 @@ class VllmConfig:
             unsupported.append("Step5")
 
         return unsupported
+
+    def _validate_tree_dflash2(self) -> None:
+        spec = self.speculative_config
+        if spec is None or not spec.enable_tree_dflash2:
+            return
+
+        model = self.model_config
+        parallel = self.parallel_config
+        cache = self.cache_config
+        compile_prefill = spec.tree_dflash2_tensorfold_compile_prefill
+        if compile_prefill and (
+            model is None
+            or model.enforce_eager
+            or self.compilation_config.mode != CompilationMode.VLLM_COMPILE
+            or self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE
+        ):
+            raise ValueError(
+                "Compiled TensorFold prefill requires VLLM_COMPILE, "
+                "outer cudagraph_mode=NONE and enforce_eager=False."
+            )
+        if (
+            not current_platform.is_cuda()
+            or not self.use_v2_model_runner
+            or model is None
+            or model.hf_text_config.model_type != "qwen3_5_text"
+            or (not model.enforce_eager and not compile_prefill)
+            or model.supports_multimodal_inputs
+            or model.enable_prompt_embeds
+            or model.logits_processors
+            or model.return_sampling_mask
+            or parallel.world_size != 1
+            or parallel.data_parallel_size != 1
+            or parallel.decode_context_parallel_size != 1
+            or self.scheduler_config.async_scheduling
+            or cache.enable_prefix_caching
+            or cache.mamba_cache_mode != "none"
+            or cache.use_kda_recoverssm
+            or self.lora_config is not None
+            or self.kv_transfer_config is not None
+            or self.ec_transfer_config is not None
+            or self.watermark_config is not None
+        ):
+            raise ValueError(
+                "Tree-DFlash2 requires a single CUDA GPU, V2 Model Runner, "
+                "and a Qwen3.5/3.8 dense text target with --enforce-eager "
+                "or compiled TensorFold prefill, "
+                "--no-async-scheduling and --no-enable-prefix-caching. "
+                "Multimodal inputs, prompt embeddings, custom logits "
+                "processors, LoRA, cache transfer and watermarking "
+                "are unsupported."
+            )
+        tree_cache_dtypes = ("fp8", "fp8_e4m3")
+        if spec.tree_dflash2_tensorfold_c1_fp8_tree_tail and (
+            cache.cache_dtype not in tree_cache_dtypes
+        ):
+            raise ValueError("C1 FP8 tree tail requires an FP8 E4M3 KV cache.")
+        if spec.tree_dflash2_mode == "tensorfold":
+            tree_cache_dtypes += ("auto", "bfloat16")
+        if spec.tree_dflash2_mode != "replay" and (
+            self.attention_config.backend is None
+            or self.attention_config.backend.name != "TRITON_ATTN"
+            or model.dtype != torch.bfloat16
+            or cache.cache_dtype not in tree_cache_dtypes
+            or cache.mamba_ssm_cache_dtype != "float32"
+            or self.scheduler_config.max_num_seqs > 8
+            or self.aux_output_config.enabled
+            or model.enable_sleep_mode
+        ):
+            raise ValueError(
+                "Packed Tree-DFlash2 requires TRITON_ATTN, BF16 activations, "
+                "FP8 E4M3 KV (or BF16 KV in TensorFold mode), FP32 SSM state, "
+                "and at most eight sequences. "
+                "Auxiliary outputs and sleep mode are unsupported."
+            )
+        if (
+            spec.tree_dflash2_mode == "tensorfold"
+            and parallel.enable_batch_sharded_sampling
+        ):
+            raise ValueError(
+                "TensorFold Tree-DFlash2 does not support batch-sharded sampling."
+            )
 
     def _validate_adaptive_verification(self) -> None:
         spec_config = self.speculative_config

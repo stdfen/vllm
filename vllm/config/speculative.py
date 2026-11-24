@@ -586,6 +586,93 @@ class SpeculativeConfig:
     """Whether to adaptively size the draft-verification budget from per-request
     confidence. Currently only supported for method="dspark"."""
 
+    enable_tree_dflash2: bool = False
+    """Enable V2 Tree-DFlash2 for Qwen3.5/3.8."""
+
+    tree_dflash2_mode: Literal["replay", "packed", "graph", "tensorfold"] = "replay"
+    """Tree verifier execution mode. The native TensorFold mode can verify 31 nodes."""
+
+    tree_dflash2_tensorfold_compile_prefill: bool = False
+    """Compile target forwards for batches containing prefill in TensorFold mode."""
+
+    tree_dflash2_tensorfold_cuda_graph: bool = False
+    """Capture and replay eligible TensorFold target verification shapes."""
+
+    tree_dflash2_tensorfold_long_context_graph: bool = False
+    """Reserve verifier graphs for full C8 batches with 17–19 attention chunks."""
+
+    tree_dflash2_tensorfold_c8_graph_buckets: bool = False
+    """Bucket attention and recurrent scratch sizes for full short-prefix C8."""
+
+    tree_dflash2_tensorfold_batch_graph_buckets: bool = False
+    """Bucket short-prefix verifier graphs for real batches of 2–8 requests."""
+
+    tree_dflash2_tensorfold_batch_device_commit: bool = False
+    """Select and commit accepted paths on the GPU for 2–8 TensorFold requests."""
+
+    tree_dflash2_tensorfold_c1_graph_bucket: bool = False
+    """Share a verification graph across short single-request prefix lengths."""
+
+    tree_dflash2_tensorfold_c1_direct_stage: bool = False
+    """Refresh matching C1 verifier buffers instead of rebuilding the plan."""
+
+    tree_dflash2_tensorfold_c1_expand_graph_bank: bool = False
+    """Reserve up to six verifier graphs for C1 fixed-capacity shapes."""
+
+    tree_dflash2_tensorfold_c1_fixed_width: bool = False
+    """Pad the native C1 verifier to 16 provisional rows without extra drafts."""
+
+    tree_dflash2_tensorfold_c1_commit_graph: bool = False
+    """Capture accepted C1 state updates for the fixed-capacity tree verifier."""
+
+    tree_dflash2_tensorfold_c1_overlap_commit: bool = False
+    """Replay C1 state updates on a separate stream while drafting."""
+
+    tree_dflash2_tensorfold_c1_device_accept: bool = False
+    """Resolve the C1 tree on CUDA and launch cache updates before host readback."""
+
+    tree_dflash2_tensorfold_c1_device_metadata: bool = False
+    """Prepare the fixed-capacity C1 GDN metadata directly from vLLM GPU slots."""
+
+    tree_dflash2_tensorfold_c1_resident_direct_stage: bool = False
+    """Refresh C1 verification graphs directly from device cache metadata."""
+
+    tree_dflash2_tensorfold_c1_grouped_resident_stage: bool = False
+    """Reuse the captured GDN layer layout across C1 device metadata updates."""
+
+    tree_dflash2_tensorfold_c1_reference_curve: bool = False
+    """Use TensorFold's fixed GB10 verification costs for single-request trees."""
+
+    tree_dflash2_tensorfold_c1_draft_graph: bool = False
+    """Capture the native single-request DFlash2 draft block."""
+
+    tree_dflash2_tensorfold_c1_pinned_readback: bool = False
+    """Copy C1 draft predictions to pinned host memory in the draft Graph."""
+
+    tree_dflash2_tensorfold_c1_async_draft_upload: bool = False
+    """Upload C1 TensorFold draft IDs to the runner from pinned host memory."""
+
+    tree_dflash2_tensorfold_c1_direct_recurrent_commit: bool = False
+    """Replay C1 recurrent state directly inside the commit Graph."""
+
+    tree_dflash2_tensorfold_c1_recurrent_commit_coverage: bool = False
+    """Write C1 recurrent state directly on Graph and ordinary commit paths."""
+
+    tree_dflash2_tensorfold_fused_conv: bool = False
+    """Batch convolution cache gathers and commits for a single request."""
+
+    tree_dflash2_tensorfold_native_target: bool = False
+    """Use TensorFold's dense Qwen3.8 projections for pure tree verification."""
+
+    tree_dflash2_tensorfold_c1_qmm_split: bool = False
+    """Select the GB10 K splits for native C1 verification of 16 rows."""
+
+    tree_dflash2_tensorfold_c1_fp8_tree_tail: bool = False
+    """Round provisional K/V to FP8 cache precision in single-request trees."""
+
+    tree_dflash2_max_replays: int = Field(default=2, ge=1, le=4)
+    """Maximum candidate replay attempts per verification batch in Tree-DFlash2."""
+
     @staticmethod
     def _acceptance_length_to_rates(length: float, n: int) -> list[float]:
         """Mean acceptance length to unconditional per-position rates, using
@@ -1969,6 +2056,195 @@ class SpeculativeConfig:
                 "Expected num_speculative_tokens to be greater "
                 f"than zero ({self.num_speculative_tokens})."
             )
+
+        if self.tree_dflash2_tensorfold_compile_prefill and not (
+            self.enable_tree_dflash2 and self.tree_dflash2_mode == "tensorfold"
+        ):
+            raise ValueError(
+                "tree_dflash2_tensorfold_compile_prefill requires "
+                "Tree-DFlash2 mode=tensorfold."
+            )
+        if self.tree_dflash2_tensorfold_batch_device_commit and not (
+            self.enable_tree_dflash2 and self.tree_dflash2_mode == "tensorfold"
+        ):
+            raise ValueError(
+                "tree_dflash2_tensorfold_batch_device_commit requires "
+                "tree mode=tensorfold."
+            )
+        if self.tree_dflash2_tensorfold_cuda_graph and (
+            not self.enable_tree_dflash2 or self.tree_dflash2_mode != "tensorfold"
+        ):
+            raise ValueError(
+                "tree_dflash2_tensorfold_cuda_graph requires tree mode=tensorfold."
+            )
+        if (
+            self.tree_dflash2_tensorfold_long_context_graph
+            and not self.tree_dflash2_tensorfold_cuda_graph
+        ):
+            raise ValueError(
+                "tree_dflash2_tensorfold_long_context_graph requires "
+                "tree_dflash2_tensorfold_cuda_graph."
+            )
+        if (
+            self.tree_dflash2_tensorfold_c8_graph_buckets
+            and not self.tree_dflash2_tensorfold_cuda_graph
+        ):
+            raise ValueError(
+                "tree_dflash2_tensorfold_c8_graph_buckets requires "
+                "tree_dflash2_tensorfold_cuda_graph."
+            )
+        if (
+            self.tree_dflash2_tensorfold_batch_graph_buckets
+            and not self.tree_dflash2_tensorfold_cuda_graph
+        ):
+            raise ValueError(
+                "tree_dflash2_tensorfold_batch_graph_buckets requires "
+                "tree_dflash2_tensorfold_cuda_graph."
+            )
+        if (
+            self.tree_dflash2_tensorfold_c1_graph_bucket
+            and not self.tree_dflash2_tensorfold_cuda_graph
+        ):
+            raise ValueError("The TensorFold C1 bucket requires CUDA Graph.")
+        if (
+            self.tree_dflash2_tensorfold_c1_direct_stage
+            and not self.tree_dflash2_tensorfold_c1_graph_bucket
+        ):
+            raise ValueError("TensorFold direct staging requires the C1 Graph bucket.")
+        if (
+            self.tree_dflash2_tensorfold_c1_expand_graph_bank
+            and not self.tree_dflash2_tensorfold_c1_graph_bucket
+        ):
+            raise ValueError("The expanded C1 graph bank requires the Graph bucket.")
+        if self.tree_dflash2_tensorfold_c1_fixed_width and not (
+            self.tree_dflash2_tensorfold_c1_graph_bucket
+            and self.tree_dflash2_tensorfold_native_target
+        ):
+            raise ValueError(
+                "C1 fixed-width verification requires the native target "
+                "and Graph bucket."
+            )
+        if (
+            self.tree_dflash2_tensorfold_c1_commit_graph
+            and not self.tree_dflash2_tensorfold_c1_graph_bucket
+        ):
+            raise ValueError("TensorFold C1 commit replay requires the Graph bucket.")
+        if (
+            self.tree_dflash2_tensorfold_c1_overlap_commit
+            and not self.tree_dflash2_tensorfold_c1_commit_graph
+        ):
+            raise ValueError("TensorFold C1 commit overlap requires the commit Graph.")
+        if self.tree_dflash2_tensorfold_c1_device_accept and (
+            not self.tree_dflash2_tensorfold_c1_commit_graph
+            or self.tree_dflash2_tensorfold_fused_conv
+        ):
+            raise ValueError(
+                "TensorFold device acceptance requires the commit Graph "
+                "with standard convolution history."
+            )
+        if (
+            self.tree_dflash2_tensorfold_c1_device_metadata
+            and not self.tree_dflash2_tensorfold_c1_device_accept
+        ):
+            raise ValueError("TensorFold device metadata requires device acceptance.")
+        if (
+            self.tree_dflash2_tensorfold_c1_resident_direct_stage
+            or self.tree_dflash2_tensorfold_c1_grouped_resident_stage
+        ) and (
+            not self.tree_dflash2_tensorfold_c1_device_accept
+            or self.tree_dflash2_tensorfold_c1_fixed_width
+        ):
+            raise ValueError(
+                "TensorFold resident direct staging requires device acceptance "
+                "and exact verification widths."
+            )
+        if (
+            (
+                self.tree_dflash2_tensorfold_c1_direct_recurrent_commit
+                or self.tree_dflash2_tensorfold_c1_recurrent_commit_coverage
+            )
+            and not self.tree_dflash2_tensorfold_c1_device_accept
+        ):
+            raise ValueError(
+                "TensorFold direct recurrent commit requires device acceptance."
+            )
+        if self.tree_dflash2_tensorfold_c1_reference_curve and (
+            not self.enable_tree_dflash2 or self.tree_dflash2_mode != "tensorfold"
+        ):
+            raise ValueError(
+                "The C1 reference cost curve requires tree mode=tensorfold."
+            )
+        if self.tree_dflash2_tensorfold_c1_draft_graph and (
+            not self.enable_tree_dflash2 or self.tree_dflash2_mode != "tensorfold"
+        ):
+            raise ValueError(
+                "TensorFold C1 draft replay requires tree mode=tensorfold."
+            )
+        if (
+            self.tree_dflash2_tensorfold_c1_pinned_readback
+            and not self.tree_dflash2_tensorfold_c1_draft_graph
+        ):
+            raise ValueError("TensorFold pinned readback requires the draft Graph.")
+        if self.tree_dflash2_tensorfold_c1_async_draft_upload and (
+            not self.enable_tree_dflash2 or self.tree_dflash2_mode != "tensorfold"
+        ):
+            raise ValueError("C1 draft upload requires tree mode=tensorfold.")
+        if (
+            self.tree_dflash2_tensorfold_fused_conv
+            and not self.tree_dflash2_tensorfold_native_target
+        ):
+            raise ValueError("TensorFold fused convolution requires the native target.")
+        if (
+            self.tree_dflash2_tensorfold_c1_qmm_split
+            and not self.tree_dflash2_tensorfold_native_target
+        ):
+            raise ValueError("TensorFold C1 QMM tuning requires the native target.")
+        if self.tree_dflash2_tensorfold_c1_fp8_tree_tail and not (
+            self.enable_tree_dflash2 and self.tree_dflash2_mode == "tensorfold"
+        ):
+            raise ValueError("C1 FP8 tree tail requires TensorFold Tree-DFlash2.")
+        if self.tree_dflash2_tensorfold_native_target and (
+            not self.enable_tree_dflash2 or self.tree_dflash2_mode != "tensorfold"
+        ):
+            raise ValueError(
+                "tree_dflash2_tensorfold_native_target requires tree mode=tensorfold."
+            )
+        if self.enable_tree_dflash2:
+            draft = self.draft_model_config
+            if (
+                self.method != "dflash"
+                or draft is None
+                or "DFlash2DraftModel" not in draft.architectures
+                or self.enable_adaptive_verification
+                or self.uses_dynamic_speculative_decoding()
+                or self.rejection_sample_method != "standard"
+                or self.draft_sample_method != "greedy"
+            ):
+                raise ValueError(
+                    "Tree-DFlash2 requires a DFlash2DraftModel, fixed K, "
+                    "greedy drafting, and standard rejection sampling."
+                )
+            if (
+                self.tree_dflash2_mode in ("packed", "graph")
+                and self.num_speculative_tokens != 7
+            ):
+                raise ValueError(
+                    "Packed Tree-DFlash2 requires num_speculative_tokens=7."
+                )
+            if (
+                self.tree_dflash2_mode == "tensorfold"
+                and self.num_speculative_tokens not in (15, 31)
+            ):
+                raise ValueError(
+                    "TensorFold Tree-DFlash2 requires num_speculative_tokens=15 or 31 "
+                    "as the scheduler's maximum lookahead."
+                )
+            if (
+                self.tree_dflash2_mode == "tensorfold"
+                and self.num_speculative_tokens == 31
+                and not self.tree_dflash2_tensorfold_native_target
+            ):
+                raise ValueError("Tree-DFlash2 K=31 requires the native target.")
 
         if self.rejection_sample_method == "synthetic":
             # Consolidate to per-position rates
