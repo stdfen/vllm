@@ -229,6 +229,37 @@ can occur due to following factors:
 
 For mitigation strategies, please refer to the FAQ entry *Can the output of a prompt vary across runs in vLLM?* in the [FAQs](../../usage/faq.md).
 
+## DeepSeek V4.1 Engram synchronization
+
+These fork-specific settings are opt-in and must match on all TP ranks.
+
+- `VLLM_DISK_ENGRAM_FENCE=event` retains the process-wide Engram ownership lock
+  but waits on the prior runner's completion event instead of draining the
+  entire device at every runner boundary. Engram prefetch streams must be
+  joined by that runner before completion. Initial ownership and exceptional
+  exits still drain the device. Set `device` for the original fence behavior.
+- `VLLM_DISK_ENGRAM_FENCE=native_target` is an experimental native DSpark
+  C1 optimization for TP2 with DP, PP and context parallel sizes of one.
+  It requires native verification, the runner's main stream, and a drafter
+  without Engram layers. Before CPU staging reuse, it waits for the previous
+  target's joined-stream completion; sampling can submit the independent
+  drafter without an additional device drain. Other configurations and
+  administrative calls retain conservative fencing. Exceptions drain the
+  device and release ownership. This does not change speculative sampling,
+  confidence costs or verification width. Default `device` is unchanged.
+  The same opt-in mode also supports the independent `tensorfold_full` lane
+  with 1..4 active requests under TP2. This lane waits for the previous whole
+  round before reusing batch staging, and records a new completion event after
+  target feedback, draft proposal and KV updates. It retains TF's internal
+  feedback waits and AsyncOutput's copy-event lifetime protocol. LoRA, KV
+  transfer, EPLB, EP, batch-sharded sampling, other streams and larger batches
+  retain device fencing. This extension does not widen the native C1 selector.
+
+Validate staging reuse, KV advancement and cancellation before enabling a
+deployment. Measure identical requests with A-B-A, keeping diagnostic timing
+separate from uninstrumented decode. Performance depends on the full deployment;
+this option does not guarantee identical generated text across execution paths.
+
 ## Known Feature Incompatibility
 
 1. Pipeline parallelism is not composable with speculative decoding as of `vllm<=0.15.0`
