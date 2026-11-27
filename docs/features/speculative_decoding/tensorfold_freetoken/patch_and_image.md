@@ -46,72 +46,69 @@ uv build --wheel
 [设备草稿 Graph 补丁](../../../../docker/tensorfold-freetoken/patches/tensorfold-draft-device-graph.patch) ·
 [GDN 目标槽位回放补丁](../../../../docker/tensorfold-freetoken/patches/tensorfold-gdn-replay-destination.patch)
 
-## 基于 vLLM 0.33.0 构建镜像
+## 默认构建 GB10 A1 256K 镜像
 
-同一个 Dockerfile 提供 `tensorfold-gb10` 和 `combined` 两个构建目标。以下
-命令用于 GB10 TensorFold 镜像。 [amd64 TensorFold + FreeToken 构建指南](../../qwen36_freetoken/patch_and_image.md)
+`docker/tensorfold-freetoken/Dockerfile` 默认构建 `gb10-auto-a1-256k`。历史镜像
+`sha256:35dd797ea3526ebcf085a3c867240c95a34344209d0e40144c3f2decd75ade29`
+从官方 0.33.0 ARM64 构建 `gb10-auto`，装入 24 个锁定的 vLLM 运行时覆盖文件和
+TensorFold 0.6.0 wheel，再替换默认预设、发布清单和验证脚本。当前配方在一个
+多阶段构建里完成这两步，校验三个最终文件与历史构建逐字节一致。
+Dockerfile 和镜像元数据变化会产生新的镜像 ID。历史性能和逐 token 回执以原镜像 ID 为准。
 
-在 Linux ARM64、Docker BuildKit 环境执行 `tensorfold-gb10`。构建上下文是锁定发布包解出的
-`release/`。工作区内的原包为
-`artifacts/20261124-vllm-tensorfold-batch-graph-buckets-aba/release.tar.gz`。
-发布包含完整 overlay、逐文件 SHA256、TensorFold wheel 及 CUDA 检查脚本。
-基础镜像使用 GB10 实测的本机镜像 ID，容器构建时校验发布清单并核对已安装的
-vLLM 模块 Git blob。CUDA 扩展在 GB10 上首次使用时编译，构建上下文无需模型权重。
-[Dockerfile](../../../../docker/tensorfold-freetoken/Dockerfile)
+默认预设使用 262144 上下文、K=15、FP8 KV、FP32 SSM、并发上限 8 和分块 prefill，
+关闭前缀缓存。配合历史混合量化权重使用 FP8 Attention 和 NVFP4 MLP。
+保留长前缀 C1 独占路由，并启用 A1 的批次候选预算、多请求 GPU 状态提交、
+C8 及短前缀通用 Graph 分桶和长前缀 Graph。
+
+在 Linux ARM64 主机上，用支持命名上下文的 Docker BuildKit 执行。将 `bundle` 指向
+共享工作区 `artifacts/20261125-gb10-tree-dflash2-auto/release-v2/build-context.tar.gz` 的副本。
+模型权重在运行时挂载。 [Dockerfile](../../../../docker/tensorfold-freetoken/Dockerfile)
 
 ```bash
 set -eu
 repo=$(git rev-parse --show-toplevel)
-bundle=/absolute/path/to/release.tar.gz
+bundle=/absolute/path/to/build-context.tar.gz
 context=$(mktemp -d)
-printf '%s  %s\n' 43c6aecb2ac75e51f17b8f53c4fa29317a54eb25f72933d5dc21e8d0128beee3 "$bundle" |
+recipe="$repo/docker/tensorfold-freetoken"
+image=vllm-tensorfold:0.33.0-gb10-auto-a1-256k
+printf '%s  %s\n' 78943ec63c3dbb1920f222fcee860eddf74148ec36818ba3cb0e391e9c84431e "$bundle" |
     sha256sum -c -
 tar -xzf "$bundle" -C "$context"
-(cd "$context/release" && sha256sum -c bundle.sha256)
-base=vllm/vllm-openai:v0.33.0
-test "$(docker image inspect --format '{{.Id}}' "$base")" = \
-    'sha256:a0dfdeea1d42d4201c82d9bb44f2f4bb1ac2ef5aea196e9e0d1007a2834d2f70'
-DOCKER_BUILDKIT=1 docker build --target tensorfold-gb10 --platform linux/arm64 --pull=false --network=none \
-    -f "$repo/docker/tensorfold-freetoken/Dockerfile" \
-    -t vllm-tensorfold-freetoken:0.33.0-gb10 "$context/release"
-docker image inspect --format '{{.Id}}' vllm-tensorfold-freetoken:0.33.0-gb10
+test "$(docker image inspect -f '{{.Id}} {{.Architecture}}' vllm/vllm-openai:v0.33.0)" = \
+    'sha256:a0dfdeea1d42d4201c82d9bb44f2f4bb1ac2ef5aea196e9e0d1007a2834d2f70 arm64'
+DOCKER_BUILDKIT=1 docker build --platform linux/arm64 --pull=false --network=none \
+    --build-context "gb10-release=$context/build-context" \
+    -f "$recipe/Dockerfile" -t "$image" "$recipe"
+docker run --rm --network none "$image" --print-config
 ```
 
-Dockerfile 对应已实测的运行时覆盖层和 wheel。归档时已核对构建上下文及覆盖层，
-新镜像构建与 GB10 服务验证待执行。
+2026-11-27 已在 GB10 使用默认目标完成构建。验收标签为
+`vllm-tensorfold:0.33.0-gb10-auto-a1-256k`，本机镜像 ID 为
+`sha256:e3e2763f7e67f0c3c7e06f295111f4a69f1ffebaa8949d2e0d325f593fb520ae`。
+离线核对确认默认预设与历史 A1 镜像逐字节一致。
+
+历史 A1 的 105 项 FlashInfer tactic 是宿主机运行缓存。复现实测时，把历史
+`20261125-gb10-tree-dflash2-reference-tails/tails/cache/a1/flashinfer/autotune/v2`
+复制到专用宿主机缓存目录的 `flashinfer/autotune/v2`，再把该缓存目录挂载到容器
+`/root/.cache`。主模型和草稿模型分别挂载到 `/model` 和 `/drafter`。
+使用默认预设启动时，镜像名后可以直接传 `--host` 或 `--port` 等覆盖项。
 
 ## 在 GB10 启动与检查
 
-以下命令使用同一套已锁定的 Qwen3.8-27B ModelOpt NVFP4/FP8
-和 DFlash2 权重。修改 `model_dir`、`draft_dir` 和 `cache_dir` 指向本机目录。
-主、草稿模型以只读方式挂载，GPU 0 和测试端口 18049 需空闲。
+以下命令使用上述默认 A1 256K 镜像。请先按上节准备历史 tactic 缓存，
+并选用空闲 GPU 和端口。主模型与草稿模型均只读挂载。
 
 ```bash
-repo=$(git rev-parse --show-toplevel)
+image=vllm-tensorfold:0.33.0-gb10-auto-a1-256k
 model_dir=/data/models/RadixArk-Qwen3.8-27B-NVFP4
 draft_dir=/data/models/Qwen3.8-27B-DFlash2
 cache_dir=/absolute/path/to/dedicated-cache
-mkdir -p "$cache_dir"
-docker run -d --name qwen38-tensorfold-freetoken \
+docker run -d --name qwen38-gb10-auto-a1-256k \
     --gpus device=0 --ipc=host -p 127.0.0.1:18049:8000 \
-    -v "$model_dir:/model:ro" -v "$draft_dir:/drafter:ro" \
-    -v "$cache_dir:/root/.cache" vllm-tensorfold-freetoken:0.33.0-gb10 /model \
-    --served-model-name qwen3.8-27b --host 0.0.0.0 --port 8000 \
-    --tensor-parallel-size 1 --dtype bfloat16 --max-model-len 131072 \
-    --max-num-seqs 8 --max-num-batched-tokens 8192 --gpu-memory-utilization 0.75 \
-    --attention-backend TRITON_ATTN --kv-cache-dtype fp8 --mamba-ssm-cache-dtype float32 \
-    --language-model-only --generation-config vllm \
-    --compilation-config '{"mode":"VLLM_COMPILE","cudagraph_mode":"NONE"}' \
-    --kernel-config '{"enable_jit_warmup":false}' \
-    --no-async-scheduling --no-enable-prefix-caching --enable-chunked-prefill \
-    --speculative-config "$(cat "$repo/docker/tensorfold-freetoken/speculative-gb10.json")"
-```
+    --mount "type=bind,src=$model_dir,dst=/model,readonly" \
+    --mount "type=bind,src=$draft_dir,dst=/drafter,readonly" \
+    --mount "type=bind,src=$cache_dir,dst=/root/.cache" "$image"
 
-服务就绪后检查 `/health`、`/v1/models` 和固定种子的推理回执。
-用日志和 `/metrics` 核对目标验树、接受状态提交及实际 Graph 重放。
-`vllm:tensorfold_batch_graph_bucket_total` 按实际批大小和执行路径计数。
-
-```bash
 curl -fsS http://127.0.0.1:18049/health
 curl -fsS http://127.0.0.1:18049/v1/models
 curl -fsS http://127.0.0.1:18049/v1/completions \
@@ -119,7 +116,10 @@ curl -fsS http://127.0.0.1:18049/v1/completions \
     -d '{"model":"qwen3.8-27b","prompt":"The capital of France is","temperature":0,"seed":11230,"max_tokens":16,"ignore_eos":true,"return_token_ids":true}'
 ```
 
-固定冒烟只验证服务可响应。正确性验收仍需通过匹配 ShareGPT 请求的逐 token 门禁，
-并在 C2/C4/C6 等场景核对 Graph 及状态提交证据。现有结果见[合入记录](integration.md)。
-回滚时用 `docker stop -t 30 qwen38-tensorfold-freetoken` 释放测试 GPU 和端口，
-并按原配置恢复已有服务状态。
+用日志和 `/metrics` 核对目标验树、接受状态提交及实际 Graph 重放。
+`vllm:tensorfold_batch_graph_bucket_total` 按实际批大小和执行路径计数。
+固定冒烟用于验证服务响应。输出一致性需通过 ShareGPT 逐 token 门禁。
+
+结束测试时用 `docker stop -t 30 qwen38-gb10-auto-a1-256k` 释放测试资源。
+
+[AMD64 / SM89 FreeToken 镜像构建指南](../../qwen36_freetoken/patch_and_image.md)

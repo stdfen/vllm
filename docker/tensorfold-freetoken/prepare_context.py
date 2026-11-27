@@ -123,7 +123,7 @@ def main() -> None:
     (output / "source-manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    for filename in ("Dockerfile", "verify_runtime.py", "verify_decode_routes.py"):
+    for filename in ("Dockerfile.sm89", "verify_runtime.py", "verify_decode_routes.py"):
         shutil.copyfile(recipe / filename, output / filename)
 
 

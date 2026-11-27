@@ -1,95 +1,63 @@
 ARG BASE_IMAGE=vllm/vllm-openai:v0.33.0
-ARG AMD64_BASE_IMAGE=vllm/vllm-openai@sha256:91ee972ab751fb7180bc71c175865e36b091686600dca783d52b2511399810b3
-FROM ${AMD64_BASE_IMAGE} AS build
 
-ENV MAX_JOBS=4 TORCH_CUDA_ARCH_LIST=8.9 TVM_FFI_CUDA_ARCH_LIST=8.9
-WORKDIR /tmp/freetoken
-COPY freetoken/ .
-RUN test -n "$(command -v nvcc)" && \
-    test -n "$(command -v ninja)" && \
-    test "$(grep -c -- '-std=c++17' setup.py)" -eq 3 && \
-    sed -i 's/-std=c++17/-std=c++20/g' setup.py && \
-    python3 setup.py build_ext --inplace
+FROM ${BASE_IMAGE} AS gb10-auto-base
 
-FROM ${AMD64_BASE_IMAGE} AS freetoken
-ENV MAX_JOBS=4 TVM_FFI_CUDA_ARCH_LIST=8.9
-COPY --from=build /tmp/freetoken/python/freetoken /tmp/qwen36-runtime/freetoken
-COPY --from=build /tmp/freetoken/LICENSE /usr/share/licenses/freetoken/LICENSE
-COPY vllm/ /tmp/qwen36-runtime/vllm
-COPY source-manifest.json /usr/share/qwen36-freetoken/source-manifest.json
-COPY verify_runtime.py verify_decode_routes.py vllm-0.33.0-qwen36-freetoken.patch /tmp/qwen36-runtime/
-COPY flashlib-0.3.0-py3-none-any.whl /tmp/qwen36-runtime/
-RUN cd /tmp/qwen36-runtime && \
-    printf '%s\n' '9037911f315fef3c9f4453261597363abcb83868813ad1b258ab1308b34fd11a  flashlib-0.3.0-py3-none-any.whl' | sha256sum -c - && \
-    uv --no-config pip install --system --no-cache --no-index --no-deps ./flashlib-0.3.0-py3-none-any.whl && \
-    mkdir /tmp/qwen36-runtime/build-driver && \
-    ln -s "${CUDA_HOME}/targets/x86_64-linux/lib/stubs/libcuda.so" /tmp/qwen36-runtime/build-driver/libcuda.so.1 && \
-    LD_LIBRARY_PATH="/tmp/qwen36-runtime/build-driver:${LD_LIBRARY_PATH}" \
-        python3 -P /tmp/qwen36-runtime/verify_runtime.py && \
-    TRITON_INTERPRET=1 python3 -P verify_decode_routes.py interpret \
-        vllm/model_executor/layers/fused_moe/qwen36_freetoken.py && \
-    TRITON_INTERPRET=0 TRITON_CACHE_DIR=/tmp/qwen36-runtime/triton \
-        python3 -P verify_decode_routes.py compile \
-        vllm/model_executor/layers/fused_moe/qwen36_freetoken.py && \
-    cd / && \
-    rm -rf /tmp/qwen36-runtime
-
-FROM freetoken AS combined
-COPY tensorfold-0.6.0-py3-none-any.whl verify_runtime.py /tmp/qwen36-tensorfold/
-RUN set -eu; \
-    cd /tmp/qwen36-tensorfold; \
-    printf '%s\n' '68f8c24002d3efbb1345462e7b7a3df2a462a2d0e06f5ca54ad0ff330ca3cbef  tensorfold-0.6.0-py3-none-any.whl' | sha256sum -c -; \
-    uv --no-config pip install --system --no-cache --no-index --no-deps ./tensorfold-0.6.0-py3-none-any.whl; \
-    vendor_headers=/usr/local/lib/python3.12/dist-packages/nvidia/cu13/include; \
-    mkdir /opt/tensorfold-cuda-headers build-driver; \
-    for header in "$vendor_headers"/cusparse*.h "$vendor_headers"/cusolver*.h "$vendor_headers"/cublas*.h; do \
-        if [ -f "$header" ]; then ln -s "$header" "/opt/tensorfold-cuda-headers/${header##*/}"; fi; \
-    done; \
-    test -f /opt/tensorfold-cuda-headers/cusparse.h; \
-    ln -s "${CUDA_HOME}/targets/x86_64-linux/lib/stubs/libcuda.so" build-driver/libcuda.so.1; \
-    LD_LIBRARY_PATH="$PWD/build-driver:${LD_LIBRARY_PATH}" python3 -P verify_runtime.py --tensorfold; \
-    cd /; \
-    rm -rf /tmp/qwen36-tensorfold
-
-ENV CPATH=/opt/tensorfold-cuda-headers \
-    NVCC_PREPEND_FLAGS=-I/opt/tensorfold-cuda-headers
-
-# Preserve the verified GB10 TensorFold-only release build.
-FROM ${BASE_IMAGE} AS tensorfold-gb10
-
-LABEL org.opencontainers.image.title="vLLM 0.33.0 TensorFold Tree-DFlash2" \
-      org.opencontainers.image.revision="4998676ce7e1400517ec3646b3cce6cfd1d01757"
-
-# Use the verified release directory as the build context.
-RUN --mount=type=bind,target=/mnt/tf-release,readonly \
-    set -eu; \
-    cd /mnt/tf-release; \
-    printf '%s  bundle.sha256\n' ce6958e981d0daa7828d2e141ab95f5cde191512f08b9f6778eea641654d24d6 \
-        | sha256sum -c -; \
-    sha256sum -c bundle.sha256; \
-    uv venv --offline --system-site-packages --python /usr/bin/python3 /opt/tree-venv; \
-    /opt/tree-venv/bin/python -m zipfile -e tensorfold-0.6.0-py3-none-any.whl /opt/tree-deps; \
-    /opt/tree-venv/bin/python -c 'from pathlib import Path; import runpy; p = Path("/mnt/tf-release/overlay"); runpy.run_path(str(p / "boot.py"))["install"](p)'; \
-    vendor_headers=/usr/local/lib/python3.12/dist-packages/nvidia/cu13/include; \
-    mkdir -p /opt/tree-cuda-headers; \
-    for header in "$vendor_headers"/cusparse*.h "$vendor_headers"/cusolver*.h "$vendor_headers"/cublas*.h; do \
-        test -f "$header" || continue; \
-        name=${header##*/}; \
-        test -e "/usr/local/cuda/include/$name" || ln -s "$header" "/opt/tree-cuda-headers/$name"; \
-    done; \
-    test -f /opt/tree-cuda-headers/cusparse.h
+LABEL org.opencontainers.image.title="vLLM 0.33.0 GB10 Tree-DFlash2" \
+      org.opencontainers.image.version="0.33.0-gb10-auto-20261125" \
+      org.opencontainers.image.base.name="vllm/vllm-openai:v0.33.0" \
+      org.opencontainers.image.base.digest="sha256:a0dfdeea1d42d4201c82d9bb44f2f4bb1ac2ef5aea196e9e0d1007a2834d2f70"
 
 ENV PYTHONPATH=/opt/tree-deps \
     CPATH=/opt/tree-cuda-headers \
     NVCC_PREPEND_FLAGS=-I/opt/tree-cuda-headers \
     MAX_JOBS=2 \
+    TORCH_CUDA_ARCH_LIST=12.1 \
     TORCH_EXTENSIONS_DIR=/root/.cache/torch_extensions \
     VLLM_USE_V2_MODEL_RUNNER=1 \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
-    TF_VERIFY_GRAPH_METRICS=1
+    TF_VERIFY_GRAPH_METRICS=1 \
+    TREE_DFLASH2_PROFILE=gb10-auto
 
-ENTRYPOINT ["vllm", "serve"]
+RUN --mount=type=bind,from=gb10-release,target=/mnt/release,readonly \
+    set -eux; \
+    cd /mnt/release; \
+    test "$(uname -m)" = aarch64; \
+    printf '%s  context.sha256\n' 78f2ef9d881fc3e23928b68aa99978833d5d180ebf4fd247a9ec35eee29f37b0 | sha256sum -c -; \
+    sha256sum -c context.sha256; \
+    uv venv --offline --system-site-packages --python /usr/bin/python3 /opt/tree-venv; \
+    /opt/tree-venv/bin/python -m zipfile -e tensorfold-0.6.0-py3-none-any.whl /opt/tree-deps; \
+    /opt/tree-venv/bin/python -c 'from pathlib import Path; import runpy; p = Path("/mnt/release/overlay"); runpy.run_path(str(p / "boot.py"))["install"](p)'; \
+    vendor_headers=/usr/local/lib/python3.12/dist-packages/nvidia/cu13/include; \
+    mkdir -p /opt/tree-cuda-headers /opt/tree-dflash2 /opt/tree-overlay/source; \
+    for header in "$vendor_headers"/cusparse*.h "$vendor_headers"/cusolver*.h "$vendor_headers"/cublas*.h; do \
+        test -f "$header" || continue; \
+        name=${header##*/}; \
+        test -e "/usr/local/cuda/include/$name" || ln -s "$header" "/opt/tree-cuda-headers/$name"; \
+    done; \
+    test -f /opt/tree-cuda-headers/cusparse.h; \
+    command -v nvcc; \
+    command -v ninja; \
+    install -m 0755 serve.sh /opt/tree-dflash2/serve; \
+    cp -a profiles release-lock.json context.sha256 verify_image.py verify_auto.py run_cuda_checks.py /opt/tree-dflash2/; \
+    cp overlay/boot.py overlay/overlay-manifest.json /opt/tree-overlay/; \
+    cp -a overlay/source/tests /opt/tree-overlay/source/; \
+    cd /; \
+    /opt/tree-venv/bin/python -B /opt/tree-dflash2/verify_image.py
 
-# BuildKit selects the amd64 combination by default.
-FROM combined AS release
+ENTRYPOINT ["/opt/tree-dflash2/serve"]
+
+FROM gb10-auto-base AS gb10-auto-a1-256k
+
+LABEL org.opencontainers.image.version="0.33.0-gb10-auto-a1-256k"
+
+RUN --mount=type=bind,source=configure_gb10_a1.py,target=/tmp/configure_gb10_a1.py,readonly \
+    set -eu; \
+    cd /opt/tree-dflash2; \
+    /opt/tree-venv/bin/python -B /tmp/configure_gb10_a1.py "$PWD"; \
+    printf '%s\n' \
+        '9d8fd4eef02c37436d43fa59f081c2e99126e94c2cb7dc329ccde8e919ba3ee7  profiles/gb10-auto.yaml' \
+        'e7da9f9175c5fe154a82edafac6ef31e9e3bc04ef751a77b08bae7c195f9c415  release-lock.json' \
+        'd393f7cf77924a03c1276627b788d4215c560ce4ebe047f3867f5dfb17dbf05e  verify_image.py' \
+        | sha256sum -c -; \
+    VLLM_TARGET_DEVICE=cpu /opt/tree-venv/bin/python -B verify_image.py --profiles

@@ -1,6 +1,6 @@
 # FreeToken 补丁使用和镜像构建
 
-本指南适用于 vLLM 0.33.0 上的 BF16 Qwen3.6-35B-A3B 单卡 FreeToken 专家卸载。源码补丁包含 vLLM 接入及 CUDA Graph 填充路由修复。TensorFold + FreeToken 组合镜像在 `docker/tensorfold-freetoken/Dockerfile` 构建时应用这份补丁。 [技术方案](../qwen36_freetoken.md) · [性能报告](performance.md)
+本指南适用于 vLLM 0.33.0 上的 BF16 Qwen3.6-35B-A3B 单卡 FreeToken 专家卸载。源码补丁包含 vLLM 接入及 CUDA Graph 填充路由修复。TensorFold + FreeToken 组合镜像在 `docker/tensorfold-freetoken/Dockerfile.sm89` 构建时应用这份补丁。 [技术方案](../qwen36_freetoken.md) · [性能报告](performance.md)
 
 ## 取得并应用补丁
 
@@ -39,7 +39,7 @@ test "$(git write-tree)" = "$expected_tree"
 
 使用 Linux amd64 主机、Docker、Git 和 Python 3.12 以上的 `uv` 环境。`combined` 目标以官方 vLLM 0.33.0 Linux amd64 CUDA 镜像为基础，先装入 TensorFold Tree-DFlash2 源码，再对镜像内的 vLLM 包检查并应用 FreeToken 源码补丁，禁止模糊匹配。构建会核对六个补丁文件的结果是否与当前工作区清单一致。
 
-镜像沿用 PyTorch `2.14.0+cu130`、Triton `3.8.0` 和 TVM FFI `0.1.11`。FreeToken 固定在 `af71ba43206e124f5ff6419b47ee36c6e9981078`，扩展以 C++20 为 SM89 编译。FlashLib `0.3.0` 与 TensorFold `0.6.0` 的 wheel 经 SHA-256 校验后离线安装。构建阶段还检查 FreeToken 的扩展 ABI、TVM FFI JIT、路由解释器与 SM89 编译，以及 TensorFold 的 DFlash2 和 vLLM 接入模块导入。 [TensorFold + FreeToken Dockerfile](../../../docker/tensorfold-freetoken/Dockerfile)
+镜像沿用 PyTorch `2.14.0+cu130`、Triton `3.8.0` 和 TVM FFI `0.1.11`。FreeToken 固定在 `af71ba43206e124f5ff6419b47ee36c6e9981078`，扩展以 C++20 为 SM89 编译。FlashLib `0.3.0` 与 TensorFold `0.6.0` 的 wheel 经 SHA-256 校验后离线安装。构建阶段还检查 FreeToken 的扩展 ABI、TVM FFI JIT、路由解释器与 SM89 编译，以及 TensorFold 的 DFlash2 和 vLLM 接入模块导入。 [TensorFold + FreeToken Dockerfile](../../../docker/tensorfold-freetoken/Dockerfile.sm89)
 
 从同时包含两项技术点的 vLLM 仓库根目录执行。TensorFold wheel 文件名为 `tensorfold-0.6.0-py3-none-any.whl`，SHA-256 为 `68f8c24002d3efbb1345462e7b7a3df2a462a2d0e06f5ca54ad0ff330ca3cbef`。在共享工作区可从 `framework-code/artifacts/20261124-vllm-tensorfold-batch-graph-buckets-aba/release/` 取得锁定的 wheel。构建上下文使用当前工作区相对于官方基线的 `vllm/` Python 源码差异，暂存的补丁也会纳入。上下文清单记录基线、源码 commit、FreeToken 修订、wheel 哈希和覆盖文件哈希。 [TensorFold wheel 的来源及源码补丁](../speculative_decoding/tensorfold_freetoken/patch_and_image.md#tensorfold-060-依赖)
 
@@ -57,7 +57,7 @@ uv run --no-project --python 3.12 python \
     "$repo/docker/tensorfold-freetoken/prepare_context.py" "$freetoken" "$context" \
     --tensorfold-wheel "$tensorfold_wheel"
 docker build --platform linux/amd64 --target combined --network=none \
-    -f "$repo/docker/tensorfold-freetoken/Dockerfile" \
+    -f "$context/Dockerfile.sm89" \
     -t vllm-tensorfold-freetoken:0.33.0-amd64-sm89 "$context"
 docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
     vllm-tensorfold-freetoken:0.33.0-amd64-sm89
@@ -65,7 +65,7 @@ docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' \
 
 有本地 `flashlib-0.3.0-py3-none-any.whl` 时可传 `--flashlib-wheel /absolute/path/to/flashlib-0.3.0-py3-none-any.whl`。底镜像已离线导入时，可用 `--build-arg AMD64_BASE_IMAGE=<本机镜像标签>` 指定等价的官方 amd64 镜像。已用于验证的 zstd 官方底镜像 manifest 是 `sha256:0b6e0dcf7982ff46914d4eb87a7405831889704477755b1a54090692730d2186`，它的解压层列表及运行配置与 Dockerfile 锁定的官方 gzip 镜像一致。
 
-只应用 FreeToken 补丁的源码可以省略 `--tensorfold-wheel`，并用 `docker build --target freetoken` 构建 FreeToken 单独镜像。
+只应用 FreeToken 补丁的源码可以省略 `--tensorfold-wheel`，并用 `docker build --target freetoken -f "$context/Dockerfile.sm89" "$context"` 构建 FreeToken 单独镜像。
 
 
 `combined` 已使用本地官方 amd64 底镜像离线构建，验收标签为 `vllm-tensorfold-freetoken:0.33.0-amd64-sm89-applied-patch`，镜像 ID 为 `sha256:051858e24630e2fe77b204d6ce5a45c496fd3d4755257c53e8eaf986ae546f23`。构建日志记录了对六个 vLLM 源文件的补丁应用和内容校验，以及 FreeToken CUDA 扩展和 TensorFold Tree-DFlash2 的检查结果。
