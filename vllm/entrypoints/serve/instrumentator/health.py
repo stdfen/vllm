@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-
-
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from vllm.engine.protocol import EngineClient
+from vllm.intellif_auth.errors import LicenseError
 from vllm.logger import init_logger
 from vllm.v1.engine.exceptions import EngineDeadError
 
@@ -29,5 +28,5 @@ async def health(raw_request: Request) -> Response:
     try:
         await client.check_health()
         return Response(status_code=200)
-    except EngineDeadError:
+    except (EngineDeadError, LicenseError):
         return Response(status_code=503)

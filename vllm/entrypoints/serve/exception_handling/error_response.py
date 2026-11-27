@@ -3,6 +3,7 @@
 from http import HTTPStatus
 
 from vllm.exceptions import GenerationError, RetryableRequestError
+from vllm.intellif_auth.errors import LicenseError
 from vllm.logger import init_logger
 
 from ..engine.protocol import ErrorInfo, ErrorResponse
@@ -36,7 +37,11 @@ def create_error_response(
         )
         from vllm.v1.engine.exceptions import EngineDeadError
 
-        if isinstance(exc, GracefulHTTPError):
+        if isinstance(exc, LicenseError):
+            err_type = exc.code
+            status_code = HTTPStatus(exc.http_status)
+            param = None
+        elif isinstance(exc, GracefulHTTPError):
             err_type = HTTPStatus(exc.http_status).phrase
             status_code = exc.http_status
             param = None

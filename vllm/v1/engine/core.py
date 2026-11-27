@@ -32,6 +32,7 @@ from vllm.distributed.ec_transfer.ec_connector.encoder_output_width import (
 )
 from vllm.envs import enable_envs_cache
 from vllm.exceptions import VLLMValidationError
+from vllm.intellif_auth.integration import core_add, core_init, core_shutdown
 from vllm.logger import configure_logging, init_logger
 from vllm.logging_utils.dump_input import dump_engine_exception
 from vllm.lora.request import LoRARequest
@@ -121,6 +122,7 @@ _R = TypeVar("_R")  # Return type for collective_rpc
 class EngineCore:
     """Inner loop of vLLM's Engine."""
 
+    @core_init
     def __init__(
         self,
         vllm_config: VllmConfig,
@@ -515,6 +517,7 @@ class EngineCore:
             )
         return metadata
 
+    @core_add
     def add_request(self, request: Request, request_wave: int = 0):
         """Add request to the scheduler.
 
@@ -831,6 +834,7 @@ class EngineCore:
             # More efficient to abort all as a single batch.
             self.abort_requests(request_ids)
 
+    @core_shutdown
     def shutdown(self):
         logger.debug_once("[shutdown] EngineCore: tearing down local resources")
         self.structured_output_manager.clear_backend()

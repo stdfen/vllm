@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-
 import asyncio
 import itertools
 import time
@@ -57,6 +56,7 @@ from vllm.entrypoints.serve.utils.tool_calls_utils import (
 )
 from vllm.exceptions import GenerationError
 from vllm.inputs import EngineInput, MultiModalPlaceholders
+from vllm.intellif_auth.errors import LicenseError
 from vllm.logger import init_logger
 from vllm.logprobs import Logprob
 from vllm.outputs import RequestOutput
@@ -944,6 +944,10 @@ class OpenAIServingChat(GenerateBaseServing):
                         delta=False,
                     )
 
+        except LicenseError as e:
+            data = self.create_streaming_error_response(e)
+            yield f"data: {data}\n\n"
+            return
         except GenerationError as e:
             yield self.create_error_response(
                 str(e), err_type="InternalServerError", status_code=e.status_code

@@ -60,6 +60,8 @@ from vllm.distributed.weight_transfer import (
     WeightTransferEngine,
     WeightTransferEngineFactory,
 )
+from vllm.intellif_auth.context import attach
+from vllm.intellif_auth.integration import checked_worker
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.model_executor.layers.quantization.online.lm_head import (
@@ -203,6 +205,7 @@ class Worker(WorkerBase):
         distributed_init_method: str,
         is_driver_worker: bool = False,
     ):
+        self._ifauth = attach(vllm_config=vllm_config)
         self.use_v2_model_runner = vllm_config.use_v2_model_runner
         if self.use_v2_model_runner and not HAS_TRITON:
             raise ValueError("Model Runner V2 requires Triton.")
@@ -445,6 +448,7 @@ class Worker(WorkerBase):
         finally:
             torch._C._accelerator_setAllocatorSettings(original_settings)
 
+    @checked_worker
     @instrument(span_name="Init device")
     def init_device(self):
         if self.device_config.device_type == "cuda":
@@ -595,6 +599,7 @@ class Worker(WorkerBase):
 
     # FIXME(youkaichao & ywang96): Use TorchDispatchMode instead of memory pool
     # to hijack tensor allocation.
+    @checked_worker
     def load_model(self, *, load_dummy_weights: bool = False) -> None:
         from vllm.v1.worker.progress_heartbeat import beat
 
@@ -645,6 +650,7 @@ class Worker(WorkerBase):
         with set_current_vllm_config(self.vllm_config):
             self.model_runner.reload_weights(*args, **kwargs)
 
+    @checked_worker
     @torch.inference_mode()
     def determine_available_memory(self) -> int:
         """Profiles the peak memory usage of the model to determine how much
@@ -940,6 +946,7 @@ class Worker(WorkerBase):
             return None
         return connector.get_aligned_num_cpu_blocks()
 
+    @checked_worker
     @instrument(span_name="Warmup (GPU)")
     def compile_or_warm_up_model(self) -> CompilationTimes:
         if not self.use_v2_model_runner:
@@ -1501,6 +1508,7 @@ class Worker(WorkerBase):
             and self.parallel_config.data_parallel_size > 1
         )
 
+    @checked_worker
     def execute_dummy_batch(self) -> None:
         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
         self.model_runner._dummy_run(

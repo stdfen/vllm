@@ -37,6 +37,8 @@ from vllm.exceptions import (
     VLLMValidationError,
 )
 from vllm.inputs import EngineInput, PromptType
+from vllm.intellif_auth.context import attach
+from vllm.intellif_auth.errors import LicenseError
 from vllm.logger import configure_logging_if_needed, init_logger
 from vllm.lora.request import LoRARequest
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
@@ -200,6 +202,7 @@ class AsyncLLM(EngineClient):
             renderer=renderer,
         )
 
+        self._ifauth = attach(vllm_config=vllm_config)
         # Loggers.
         self.logger_manager: StatLoggerManager | None = None
         if self.log_stats:
@@ -812,6 +815,10 @@ class AsyncLLM(EngineClient):
             raise
 
         # Engine is dead. Do not abort since we shut down.
+        except LicenseError:
+            if q is not None:
+                await self.abort(q.request_id, internal=True)
+            raise
         except EngineDeadError:
             if self.log_requests:
                 logger.info("Request %s failed (engine dead).", request_id)
@@ -1090,6 +1097,10 @@ class AsyncLLM(EngineClient):
             raise
 
         # Engine is dead. Do not abort since we shut down.
+        except LicenseError:
+            if q is not None:
+                await self.abort(q.request_id, internal=True)
+            raise
         except EngineDeadError:
             if self.log_requests:
                 logger.info("Request %s failed (engine dead).", request_id)
@@ -1127,6 +1138,7 @@ class AsyncLLM(EngineClient):
             self.logger_manager.log()
 
     async def check_health(self) -> None:
+        self._ifauth.snapshot()
         logger.debug("Called check_health.")
         if get_elastic_ep_rank_retired():
             return

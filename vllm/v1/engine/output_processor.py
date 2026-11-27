@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-
 import asyncio
 from collections import defaultdict, deque
 from collections.abc import Iterable
@@ -10,6 +9,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import torch
 
+from vllm.intellif_auth.errors import LicenseError
 from vllm.lora.request import LoRARequest
 from vllm.outputs import (
     STREAM_FINISHED,
@@ -753,6 +753,7 @@ class OutputProcessor:
         within the loop below.
         """
         request_outputs: list[RequestOutput | PoolingRequestOutput] = []
+        license_error = None
         reqs_to_abort: list[str] = []
         for engine_core_output in engine_core_outputs:
             req_id = engine_core_output.request_id
@@ -771,6 +772,17 @@ class OutputProcessor:
                     reqs_to_abort.append(req_id)
                 continue
 
+            if engine_core_output.stop_reason in (
+                "LICENSE_DENIED",
+                "LICENSE_UNAVAILABLE",
+            ):
+                error = LicenseError(engine_core_output.stop_reason)
+                if req_state.queue is not None:
+                    req_state.queue.put(error)
+                else:
+                    license_error = error
+                self._finish_request(req_state)
+                continue
             # 1) Compute stats for this iteration.
             self._update_stats_from_output(
                 req_state, engine_core_output, engine_core_timestamp, iteration_stats
@@ -888,6 +900,8 @@ class OutputProcessor:
                     if self.tracing_enabled:
                         self.do_tracing(engine_core_output, req_state, iteration_stats)
 
+        if license_error is not None:
+            raise license_error
         return OutputProcessorOutput(
             request_outputs=request_outputs,
             reqs_to_abort=reqs_to_abort,

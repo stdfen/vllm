@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-
 import asyncio
 import itertools
 import time
@@ -41,6 +40,7 @@ from vllm.entrypoints.serve.utils.api_utils import get_max_tokens, should_includ
 from vllm.entrypoints.serve.utils.request_logger import RequestLogger
 from vllm.exceptions import GenerationError, VLLMValidationError
 from vllm.inputs import EngineInput
+from vllm.intellif_auth.errors import LicenseError
 from vllm.logger import init_logger
 from vllm.logprobs import Logprob
 from vllm.outputs import RequestOutput
@@ -549,6 +549,10 @@ class OpenAIServingCompletion(GenerateBaseServing):
             # report to FastAPI middleware aggregate usage across all choices
             request_metadata.final_usage_info = final_usage_info
 
+        except LicenseError as e:
+            data = self.create_streaming_error_response(e)
+            yield f"data: {data}\n\n"
+            return
         except GenerationError as e:
             yield f"data: {self._convert_generation_error_to_streaming_response(e)}\n\n"
         except Exception as e:

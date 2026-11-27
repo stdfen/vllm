@@ -27,6 +27,7 @@ from vllm.distributed.elastic_ep.external_elastic_ep import (
     ExternalElasticEPScaleCoordinator,
 )
 from vllm.envs import VLLM_ENGINE_READY_TIMEOUT_S
+from vllm.intellif_auth.integration import error_outputs
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.renderers import BaseRenderer
@@ -396,6 +397,12 @@ class InprocClient(EngineCoreClient):
         self._finalizer = weakref.finalize(self, self.engine_core.shutdown)
 
     def get_output(self) -> EngineCoreOutputs:
+        if self.engine_core._ifauth_rejected:
+            rejected, self.engine_core._ifauth_rejected = (
+                self.engine_core._ifauth_rejected,
+                [],
+            )
+            return error_outputs(rejected)[0]
         outputs, model_executed = self.engine_core.step_fn()
         self.engine_core.post_step(model_executed=model_executed)
         return outputs and outputs.get(0) or EngineCoreOutputs()

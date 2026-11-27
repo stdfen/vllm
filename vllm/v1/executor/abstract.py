@@ -14,6 +14,7 @@ from vllm.distributed.kv_transfer.kv_connector.utils import KVOutputAggregator
 from vllm.distributed.kv_transfer.kv_connector.v1.base import (
     KVConnectorHandshakeMetadata,
 )
+from vllm.intellif_auth.context import bootstrap_executor
 from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.tasks import SupportedTask
@@ -107,6 +108,7 @@ class Executor(ABC):
         self,
         vllm_config: VllmConfig,
     ) -> None:
+        self._ifauth = bootstrap_executor(vllm_config)
         self.vllm_config = vllm_config
         self.model_config = vllm_config.model_config
         self.cache_config = vllm_config.cache_config
